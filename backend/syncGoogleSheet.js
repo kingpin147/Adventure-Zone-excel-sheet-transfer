@@ -63,7 +63,18 @@ export async function export10DaysToGoogleSheets() {
 
     const mappedRows = allBookings.map(rootBooking => {
       const b = rootBooking.booking || rootBooking;
-      const res = b.formInfo?.extendedFormResponses || {};
+      
+      const res = {};
+      if (b.additionalFields && Array.isArray(b.additionalFields)) {
+        b.additionalFields.forEach(field => {
+          if (field._id) {
+            const formattedId = field._id.replace(/-/g, "_");
+            res[`s_${formattedId}`] = field.value;
+            res[`c_${formattedId}`] = field.value === "Checked" || field.value === true;
+          }
+        });
+      }
+
       const serviceName = b.bookedService?.name || b.bookedEntity?.title || "";
       const bookingId = b._id;
       
@@ -109,16 +120,18 @@ export async function export10DaysToGoogleSheets() {
       }
 
       // Format Start / End Date
-      // e.g. 2026-03-21T10:30:00.000-07:00
-      const startDate = b.selectedSession?.start?.timestamp || b.startDate || "";
-      const endDate = b.selectedSession?.end?.timestamp || b.endDate || "";
+      const startDate = b.startDate || b.selectedSession?.start?.timestamp || "";
+      const endDate = b.endDate || b.selectedSession?.end?.timestamp || "";
+      
+      const staffMember = b.bookedEntity?.tags?.find(t => t.tag === "STAFF")?.name || b.bookedEntity?.staffMember?.name || b.selectedSession?.staffMemberName || "";
+      const internalNotes = b.adminNotes || b.internalNotes || b.notes || "";
 
       // Construct 22 column array (A to V)
       return [
         startDate, // A
         endDate,   // B
-        b.notes || b.internalNotes || "", // C
-        b.selectedSession?.staffMemberName || "", // D
+        internalNotes, // C
+        staffMember, // D
         serviceName, // E
         b.contactDetails?.firstName || "", // F
         b.contactDetails?.lastName || "",  // G
