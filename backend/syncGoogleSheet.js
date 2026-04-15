@@ -2,6 +2,25 @@ import { extendedBookings } from '@wix/bookings';
 import { fetch } from 'wix-fetch';
 import { auth } from '@wix/essentials';
 import { getSecret } from 'wix-secrets-backend';
+import wixData from 'wix-data';
+
+// Helper function for critical logging to the CMS 'logs' collection
+async function logCritical(title, message, error = null) {
+  try {
+    const logEntry = {
+      title: title,
+      message: message,
+      timestamp: new Date()
+    };
+    if (error) {
+      logEntry.errorDetails = typeof error === 'string' ? error : error.message || error.toString();
+    }
+    await wixData.insert("logs", logEntry, { suppressAuth: true });
+    console.log(`Critical Log: ${title} - ${message}`, error || "");
+  } catch (err) {
+    console.error("Failed to insert log into CMS:", err);
+  }
+}
 
 export async function export10DaysToGoogleSheets() {
   try {
@@ -10,9 +29,7 @@ export async function export10DaysToGoogleSheets() {
 
     // Calculate dates
     const now = new Date();
-    // Start of today
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-    // End of 10 days from now
     const endWindow = new Date(startOfToday.getTime());
     endWindow.setDate(endWindow.getDate() + 10);
     endWindow.setHours(23, 59, 59, 999);
@@ -29,25 +46,19 @@ export async function export10DaysToGoogleSheets() {
         filter: {
           "$and": [
             { "startDate": { "$gte": startOfToday.toISOString() } },
-            { "startDate": { "$lte": endWindow.toISOString() } }
+            { "startDate": { "$lte": endWindow.toISOString() } },
+            { "status": { "$in": ["CONFIRMED", "PENDING"] } }
           ]
         },
-        cursorPaging: {
-          limit: 100
-        }
+        cursorPaging: { limit: 100 }
       };
 
-      if (cursor) {
-        q.cursorPaging.cursor = cursor;
-      }
+      if (cursor) q.cursorPaging.cursor = cursor;
 
       const results = await elevatedQuery(q);
       allBookings = allBookings.concat(results.extendedBookings || []);
       
-      // Fixed: PagingMetadataV2 uses cursors.next to determine if there are more items
       if (results.pagingMetadata && results.pagingMetadata.cursors && results.pagingMetadata.cursors.next) {
-
-
         cursor = results.pagingMetadata.cursors.next;
       } else {
         hasNext = false;
@@ -55,7 +66,7 @@ export async function export10DaysToGoogleSheets() {
     }
 
     if (allBookings.length === 0) {
-      console.log("No bookings found in the next 10 days.");
+      await logCritical("Production Sync Warning", "No bookings found in the next 10 days.");
       return;
     }
 
@@ -100,10 +111,7 @@ export async function export10DaysToGoogleSheets() {
         l = "n/a";
         m = res["s_18f379e7_7cb1_4d49_ab10_e58dde8c30d0"] || ""; 
         n = res["s_f2fcf0ee_a161_4441_8774_9dcfd94d959e"] || "";
-        o = "n/a";
-        p = "n/a";
-        q = "n/a";
-        r = "n/a";
+        o = "n/a"; p = "n/a"; q = "n/a"; r = "n/a";
         s = res["s_3040c0ca_b567_41a7_abed_e10fc090fc43"] || "";
       } else {
         h = res["s_8da98aba_a973_4da8_945b_4c7fde36fd53"] || ""; 
@@ -111,45 +119,49 @@ export async function export10DaysToGoogleSheets() {
         l = res["s_3be35852_23cd_468a_8aa1_8cafa4fa73f2"] || "";
         m = res["s_d2afd821_b61a_49dd_88f6_0c875d4bf9c9"] || ""; 
         n = res["s_a123bb4c_cd17_40d7_b8c9_76418c40851b"] || "";
-        // Booleans
-        o = res["c_01196b47_1ce2_44e0_9ae6_745d814752f2"] ? "TRUE" : "FALSE";
-        p = res["c_5951def1_1464_448e_97f3_d748c65c4c96"] ? "TRUE" : "FALSE";
-        q = res["c_5e8ab05a_915d_4ff4_b7fc_1e336a3ff66c"] ? "TRUE" : "FALSE";
-        r = res["c_aaeef4dc_6c8f_4c67_a4cc_6bf98deda30b"] ? "TRUE" : "FALSE";
+        o = res["c_01196b47_1ce2_44e0_9ae6_745d814752f2"] ? "TRUE" : "";
+        p = res["c_5951def1_1464_448e_97f3_d748c65c4c96"] ? "TRUE" : "";
+        q = res["c_5e8ab05a_915d_4ff4_b7fc_1e336a3ff66c"] ? "TRUE" : "";
+        r = res["c_aaeef4dc_6c8f_4c67_a4cc_6bf98deda30b"] ? "TRUE" : "";
         s = res["s_66923e81_1282_4689_bc32_08d3c020492c"] || "";
       }
 
-      // Format Start / End Date
-      const startDate = b.startDate || b.selectedSession?.start?.timestamp || "";
-      const endDate = b.endDate || b.selectedSession?.end?.timestamp || "";
+      function formatVancouverDate(isoStr) {
+          if (!isoStr) return "";
+          try {
+              const d = new Date(isoStr);
+              if (isNaN(d.getTime())) return isoStr;
+              
+              const opts = { timeZone: 'America/Vancouver', hour12: false,
+                  year: 'numeric', month: '2-digit', day: '2-digit',
+                  hour: '2-digit', minute: '2-digit', second: '2-digit' };
+              const f = new Intl.DateTimeFormat('en-US', opts).formatToParts(d);
+              const p = {}; f.forEach(pt => p[pt.type] = pt.value);
+              
+              const localMs = new Date(`${p.year}-${p.month}-${p.day}T${p.hour === '24' ? '00' : p.hour}:${p.minute}:${p.second}Z`).getTime();
+              let diffMins = Math.round((localMs - d.getTime()) / 60000);
+              const sign = diffMins < 0 ? "-" : "+";
+              diffMins = Math.abs(diffMins);
+              const hrs = String(Math.floor(diffMins / 60)).padStart(2, '0');
+              const mins = String(diffMins % 60).padStart(2, '0');
+              
+              return `${p.year}-${p.month}-${p.day}T${p.hour === '24' ? '00' : p.hour}:${p.minute}:${p.second}.000${sign}${hrs}:${mins}`;
+          } catch(e) { return isoStr; }
+      }
+
+      const startDate = formatVancouverDate(b.startDate || b.selectedSession?.start?.timestamp || "");
+      const endDate = formatVancouverDate(b.endDate || b.selectedSession?.end?.timestamp || "");
       
-      const staffMember = b.bookedEntity?.tags?.find(t => t.tag === "STAFF")?.name || b.bookedEntity?.staffMember?.name || b.selectedSession?.staffMemberName || "";
+      const tags = b.bookedEntity?.tags || [];
+      const resourceNames = tags.filter(t => t.tag === "RESOURCE" || t.tag === "LOCATION").map(t => t.name).join(", ");
+      const staffMember = b.bookedEntity?.slot?.resource?.name || resourceNames || tags.find(t => t.tag === "STAFF")?.name || b.bookedEntity?.staffMember?.name || b.selectedSession?.staffMemberName || "";
       const internalNotes = b.adminNotes || b.internalNotes || b.notes || "";
 
-      // Construct 22 column array (A to V)
       return [
-        startDate, // A
-        endDate,   // B
-        internalNotes, // C
-        staffMember, // D
-        serviceName, // E
-        b.contactDetails?.firstName || "", // F
-        b.contactDetails?.lastName || "",  // G
-        h, // H
-        formattedPhone, // I
-        b.contactDetails?.email || "", // J
-        k, // K
-        l, // L
-        m, // M
-        n, // N
-        o, // O
-        p, // P
-        q, // Q
-        r, // R
-        s, // S
-        "n/a", // T
-        "n/a", // U
-        bookingId // V
+        startDate, endDate, internalNotes, staffMember, serviceName,
+        b.contactDetails?.firstName || "", b.contactDetails?.lastName || "", 
+        h, formattedPhone, b.contactDetails?.email || "", k, l, m, n, o, p, q, r, s,
+        "n/a", "n/a", bookingId
       ];
     });
 
@@ -162,13 +174,27 @@ export async function export10DaysToGoogleSheets() {
     });
 
     if (response.ok) {
-        const jsonResponse = await response.json();
-        console.log("Successfully synced to Google Sheets!", jsonResponse);
+        let jsonResponse;
+        try {
+            jsonResponse = await response.json();
+            console.log("Successfully synced to Google Sheets!", jsonResponse);
+        } catch (e) {
+            await logCritical("Production Sync Error", "Failed to parse Google Apps script response", e);
+            return;
+        }
+
+        // Add logging for Google Apps Script explicit errors
+        if (jsonResponse.status === "error") {
+            await logCritical("Production Sync App Error", "Google Apps Script returned an error", jsonResponse.message);
+        } else {
+            await logCritical("Production Sync Success", `Successfully synced ${mappedRows.length} bookings.`);
+        }
     } else {
-        console.error("Failed to sync to Google Sheets. Status:", response.status);
+        const errText = await response.text();
+        await logCritical("Production Sync Failed", `HTTP Status: ${response.status} from Google Apps Script`, errText);
     }
 
   } catch (error) {
-    console.error("Error running 10 day sync function:", error);
+    await logCritical("Production Sync Execution Error", "Error running 10 day sync function", error);
   }
 }

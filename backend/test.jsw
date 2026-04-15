@@ -1,0 +1,12 @@
+import { export10DaysToGoogleSheets } from 'backend/syncGoogleSheet';
+
+/**
+ * Manually triggers the production 10-day synchronization logic.
+ * Run this from the Wix Editor to force the sync instantly instead of waiting for the 4-hour cycle.
+ * Check your 'logs' CMS collection right after this finishes to see the result!
+ */
+export async function triggerProductionSync() {
+    console.log("Manually firing the production sync logic...");
+    await export10DaysToGoogleSheets();
+    return "Production sync completed. Please check your Wix CMS 'logs' database for the outcome.";
+}
