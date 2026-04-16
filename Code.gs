@@ -46,6 +46,9 @@ function doPost(e) {
       }
     }
 
+    // Cleanup and Sort after syncing
+    cleanupAndSortBookings();
+
     return ContentService
       .createTextOutput(JSON.stringify({ status: "success", parsedCount: bookings.length }))
       .setMimeType(ContentService.MimeType.JSON);
@@ -54,5 +57,46 @@ function doPost(e) {
     return ContentService
       .createTextOutput(JSON.stringify({ status: "error", message: error.toString() }))
       .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+/**
+ * Removes rows where the date in Column A is before today.
+ * Then sorts all data (A2:V) by Column A ascending.
+ */
+function cleanupAndSortBookings() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
+  const lastRow = sheet.getLastRow();
+  
+  if (lastRow <= 1) return; // No data to process
+
+  // 1. CLEAR PAST BOOKINGS
+  // We determine "today" in Vancouver time to match the incoming data format
+  const now = new Date();
+  const vancouverNow = new Date(now.toLocaleString("en-US", {timeZone: "America/Vancouver"}));
+  vancouverNow.setHours(0, 0, 0, 0); // Start of today
+
+  const data = sheet.getRange(2, 1, lastRow - 1, 1).getValues(); // Get Column A only
+  
+  // Iterate backwards when deleting rows to keep indices correct
+  for (let i = data.length - 1; i >= 0; i--) {
+    const rowDateString = data[i][0];
+    if (!rowDateString) continue;
+
+    const rowDate = new Date(rowDateString);
+    if (!isNaN(rowDate.getTime())) {
+      // If the booking date is before the start of today, delete it
+      if (rowDate < vancouverNow) {
+        sheet.deleteRow(i + 2); // +2 because index i starts at 0 for row 2
+      }
+    }
+  }
+
+  // 2. SORT REMAINING DATA
+  const newLastRow = sheet.getLastRow();
+  if (newLastRow > 1) {
+    const sortRange = sheet.getRange(2, 1, newLastRow - 1, 22); // Columns A to V
+    sortRange.sort({column: 1, ascending: true});
   }
 }
