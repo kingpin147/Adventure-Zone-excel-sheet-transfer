@@ -48,8 +48,8 @@ export async function export10DaysToGoogleSheets() {
             { "startDate": { "$gte": startOfToday.toISOString() } },
             { "startDate": { "$lte": endWindow.toISOString() } },
             { "status": { "$in": ["CONFIRMED", "PENDING"] } }
-          ]
-        },
+      ]  },
+        sort: [{ fieldName: "startDate", direction: "ASC" }],
         cursorPaging: { limit: 100 }
       };
 
@@ -64,6 +64,13 @@ export async function export10DaysToGoogleSheets() {
         hasNext = false;
       }
     }
+
+    // Secondary manual sort to guarantee chronological order before processing
+    allBookings.sort((a, b) => {
+        const startA = a.startDate || (a.booking && a.booking.startDate);
+        const startB = b.startDate || (b.booking && b.booking.startDate);
+        return new Date(startA).getTime() - new Date(startB).getTime();
+    });
 
     if (allBookings.length === 0) {
       await logCritical("Production Sync Warning", "No bookings found in the next 10 days.");

@@ -26,6 +26,11 @@ function doPost(e) {
     // Process incoming bookings — update existing rows or append new ones
     for (let i = 0; i < bookings.length; i++) {
       const bRow = bookings[i];
+      
+      // Convert date strings to real Date objects so Sheets can sort/format them correctly
+      if (bRow[0]) bRow[0] = new Date(bRow[0]);
+      if (bRow[1]) bRow[1] = new Date(bRow[1]);
+
       const incomingId = bRow[21];
 
       if (bookingIdMap[incomingId]) {
