@@ -48,14 +48,24 @@ export const testGetLast10DaysBookings = webMethod(Permissions.Admin, async () =
             const b = rootBooking.booking || rootBooking;
 
             const res = {};
+            const fields = [];
             if (b.additionalFields && Array.isArray(b.additionalFields)) {
-                b.additionalFields.forEach(field => {
-                    if (field._id) {
-                        const formattedId = field._id.replace(/-/g, "_");
-                        res[`s_${formattedId}`] = field.value;
-                        res[`c_${formattedId}`] = field.value === "Checked" || field.value === true;
-                    }
-                });
+                fields.push(...b.additionalFields);
+            }
+            if (b.formInfo && Array.isArray(b.formInfo.formResponses)) {
+                fields.push(...b.formInfo.formResponses);
+            }
+
+            fields.forEach(field => {
+                if (field._id) {
+                    const formattedId = field._id.replace(/-/g, "_");
+                    res[`s_${formattedId}`] = field.value;
+                    res[`c_${formattedId}`] = field.value === "Checked" || field.value === true;
+                }
+            });
+
+            if (b.formInfo && b.formInfo.extendedFormResponses) {
+                Object.assign(res, b.formInfo.extendedFormResponses);
             }
 
             const serviceName = b.bookedService?.name || b.bookedEntity?.title || "";

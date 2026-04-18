@@ -1,7 +1,7 @@
 import { customTrigger } from '@wix/automations';
 import { auth } from '@wix/essentials';
 import wixData from 'wix-data';
-import { extendedBookings } from 'wix-bookings.v2';
+import { extendedBookings } from '@wix/bookings';
 import { fetch } from 'wix-fetch';
 
 // --- CONFIGURATION ---
@@ -29,15 +29,33 @@ async function logCritical(title, message, error = null) {
 
 // --- 1. MAPPING HELPER (For Google Sheets) ---
 export function getMappedRow(b, bookingId) {
-    const res = b.formInfo?.extendedFormResponses || {};
-    const serviceName = b.bookedService?.name || "";
+    const res = {};
+    if (b.additionalFields && Array.isArray(b.additionalFields)) {
+        b.additionalFields.forEach(field => {
+            if (field._id) {
+                const formattedId = field._id.replace(/-/g, "_");
+                res[`s_${formattedId}`] = field.value;
+                res[`c_${formattedId}`] = field.value === "Checked" || field.value === true;
+            }
+        });
+    }
+
+    const serviceName = b.bookedService?.name || b.bookedEntity?.title || "";
     
     let rawPhone = b.contactDetails?.phone || "";
     let clean = rawPhone.replace(/[^\d]/g, "");
-    let formattedPhone = clean.length === 10 ? `+1-${clean.slice(0,3)}-${clean.slice(3,6)}-${clean.slice(6)}` : rawPhone;
+    let formattedPhone = rawPhone;
+    if (clean.length === 10) {
+        formattedPhone = `+1-${clean.slice(0,3)}-${clean.slice(3,6)}-${clean.slice(6)}`;
+    } else if (clean.length === 11 && clean.startsWith("1")) {
+        formattedPhone = `+1-${clean.slice(1,4)}-${clean.slice(4,7)}-${clean.slice(7)}`;
+    }
 
-    let h, k, l, m, n, o, p, q, r, s;
-    if (serviceName.toLowerCase().includes("group")) {
+    const hasGroupField = (res["s_18f379e7_7cb1_4d49_ab10_e58dde8c30d0"] !== undefined || res["s_f2fcf0ee_a161_4441_8774_9dcfd94d959e"] !== undefined);
+    const isGroupActivity = hasGroupField || serviceName.toLowerCase().includes("group");
+
+    let h = "", k = "", l = "", m = "", n = "", o = "", p = "", q = "", r = "", s = "";
+    if (isGroupActivity) {
         h = res["s_ddc54cc9_58c2_4719_a624_dff45aece64e"] || ""; 
         k = res["s_d2afd821_b61a_49dd_88f6_0c875d4bf9c9"] || ""; 
         l = "n/a";
@@ -88,13 +106,15 @@ export function getMappedRow(b, bookingId) {
     const resourceNames = tags.filter(t => t.tag === "RESOURCE" || t.tag === "LOCATION").map(t => t.name).join(", ");
     const staffMember = b.bookedEntity?.slot?.resource?.name || resourceNames || tags.find(t => t.tag === "STAFF")?.name || b.bookedEntity?.staffMember?.name || b.selectedSession?.staffMemberName || "";
 
+    const internalNotes = b.adminNotes || b.internalNotes || b.notes || "";
+
     return [
         startDate, endDate, 
-        b.notes || b.internalNotes || "", staffMember, 
+        internalNotes, staffMember, 
         serviceName, b.contactDetails?.firstName || "", b.contactDetails?.lastName || "", 
         h, formattedPhone, b.contactDetails?.email || "", k, 
         l, m, n, o, p, q, r,
-        s, "obsolete", "obsolete", bookingId
+        s, "n/a", "n/a", bookingId
     ];
 }
 
@@ -106,7 +126,8 @@ export async function wixBookingsV2_onBookingUpdated(event) {
     const result = await elevatedQuery({ filter: { "_id": bookingId } });
 
     if (result.extendedBookings && result.extendedBookings.length > 0) {
-        const b = result.extendedBookings[0];
+        const rootBooking = result.extendedBookings[0];
+        const b = rootBooking.booking || rootBooking;
 
         // Sync to Google Sheet
         const rowArray = getMappedRow(b, bookingId);
