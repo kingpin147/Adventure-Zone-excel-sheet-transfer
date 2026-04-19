@@ -60,7 +60,14 @@ export const testGetLast10DaysBookings = webMethod(Permissions.Admin, async () =
                 if (field._id) {
                     const formattedId = field._id.replace(/-/g, "_");
                     res[`s_${formattedId}`] = field.value;
-                    res[`c_${formattedId}`] = field.value === "Checked" || field.value === true;
+                    res[`c_${formattedId}`] = (field.value === "Checked" || field.value === true);
+                }
+                // V2 Robustness: Catch common labels like "Anything else you'd like us to know?"
+                if (field.label) {
+                    const labelKey = field.label.toLowerCase().trim();
+                    if (labelKey.includes("anything else") || labelKey.includes("message") || labelKey.includes("note")) {
+                        res["detected_note"] = field.value;
+                    }
                 }
             });
 
@@ -93,7 +100,7 @@ export const testGetLast10DaysBookings = webMethod(Permissions.Admin, async () =
                 m = res["s_18f379e7_7cb1_4d49_ab10_e58dde8c30d0"] || "";
                 n = res["s_f2fcf0ee_a161_4441_8774_9dcfd94d959e"] || "";
                 o = "n/a"; p = "n/a"; q = "n/a"; r = "n/a";
-                s = res["s_3040c0ca_b567_41a7_abed_e10fc090fc43"] || "";
+                s = res["s_3040c0ca_b567_41a7_abed_e10fc090fc43"] || res["detected_note"] || "";
             } else {
                 h = res["s_8da98aba_a973_4da8_945b_4c7fde36fd53"] || "";
                 k = res["s_ddc54cc9_58c2_4719_a624_dff45aece64e"] || "";
@@ -104,7 +111,7 @@ export const testGetLast10DaysBookings = webMethod(Permissions.Admin, async () =
                 p = res["c_5951def1_1464_448e_97f3_d748c65c4c96"] ? "TRUE" : "";
                 q = res["c_5e8ab05a_915d_4ff4_b7fc_1e336a3ff66c"] ? "TRUE" : "";
                 r = res["c_aaeef4dc_6c8f_4c67_a4cc_6bf98deda30b"] ? "TRUE" : "";
-                s = res["s_66923e81_1282_4689_bc32_08d3c020492c"] || "";
+                s = res["s_66923e81_1282_4689_bc32_08d3c020492c"] || res["detected_note"] || "";
             }
 
             function formatVancouverDate(isoStr) {

@@ -77,22 +77,28 @@ function cleanupAndSortBookings() {
   if (lastRow <= 1) return; // No data to process
 
   // 1. CLEAR PAST BOOKINGS
-  // We determine "today" in Vancouver time to match the incoming data format
-  const now = new Date();
-  const vancouverNow = new Date(now.toLocaleString("en-US", {timeZone: "America/Vancouver"}));
-  vancouverNow.setHours(0, 0, 0, 0); // Start of today
+  // Determine "today" in Vancouver time (yyyy-MM-dd)
+  const vancouverTodayStr = Utilities.formatDate(new Date(), "America/Vancouver", "yyyy-MM-dd");
+  const vancouverToday = new Date(vancouverTodayStr + "T00:00:00"); 
 
   const data = sheet.getRange(2, 1, lastRow - 1, 1).getValues(); // Get Column A only
   
   // Iterate backwards when deleting rows to keep indices correct
   for (let i = data.length - 1; i >= 0; i--) {
-    const rowDateString = data[i][0];
-    if (!rowDateString) continue;
+    let rowVal = data[i][0];
+    if (!rowVal) continue;
 
-    const rowDate = new Date(rowDateString);
+    let rowDate;
+    if (rowVal instanceof Date) {
+      rowDate = rowVal;
+    } else {
+      rowDate = new Date(rowVal);
+    }
+
     if (!isNaN(rowDate.getTime())) {
-      // If the booking date is before the start of today, delete it
-      if (rowDate < vancouverNow) {
+      // Compare the date part only
+      const rowDateStr = Utilities.formatDate(rowDate, "America/Vancouver", "yyyy-MM-dd");
+      if (rowDateStr < vancouverTodayStr) {
         sheet.deleteRow(i + 2); // +2 because index i starts at 0 for row 2
       }
     }
