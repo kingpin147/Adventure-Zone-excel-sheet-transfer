@@ -4,10 +4,12 @@ import wixData from 'wix-data';
 import { extendedBookings } from '@wix/bookings';
 import { fetch } from 'wix-fetch';
 
+//not using code as it for previous developer implementaion and it  not longer exists in production so dont count it
+
 // --- CONFIGURATION ---
 const TRIGGER_ID = "120ba264-62e2-42bb-9f35-f6f1ee05856a"; 
 const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwYP_QYOEKVt6k0xDVgN7ChUtocd2iH3eL00h0mLiHllNq2N2Grf8BIBDcalA4OjSRX/exec"; 
+const SCRIPT_URL = "some url"; 
 
 // Helper function for critical logging to the CMS 'logs' collection
 async function logCritical(title, message, error = null) {

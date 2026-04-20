@@ -50,7 +50,8 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
             { "startDate": { "$gte": startOfToday.toISOString() } },
             { "startDate": { "$lte": endWindow.toISOString() } },
             { "status": { "$in": ["CONFIRMED", "PENDING"] } }
-      ]  },
+          ]
+        },
         sort: [{ fieldName: "startDate", direction: "ASC" }],
         cursorPaging: { limit: 100 }
       };
@@ -84,7 +85,6 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
     const mappedRows = allBookings.map(rootBooking => {
       const b = rootBooking.booking || rootBooking;
       
-      const res = {};
       const fields = [];
       if (b.additionalFields && Array.isArray(b.additionalFields)) {
         fields.push(...b.additionalFields);
@@ -92,27 +92,83 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
       if (b.formInfo && Array.isArray(b.formInfo.formResponses)) {
         fields.push(...b.formInfo.formResponses);
       }
-      
-      fields.forEach(field => {
-        if (field._id) {
-          const formattedId = field._id.replace(/-/g, "_");
-          res[`s_${formattedId}`] = field.value;
-          res[`c_${formattedId}`] = (field.value === "Checked" || field.value === true);
-        }
-        // V2 Robustness: Catch common labels like "Anything else you'd like us to know?"
-        if (field.label) {
-          const labelKey = field.label.toLowerCase().trim();
-          if (labelKey.includes("anything else") || labelKey.includes("message") || labelKey.includes("note")) {
-            res["detected_note"] = field.value;
-          }
-        }
-      });
-      
       if (b.formInfo && b.formInfo.extendedFormResponses) {
-          Object.assign(res, b.formInfo.extendedFormResponses);
+          Object.entries(b.formInfo.extendedFormResponses).forEach(([label, value]) => {
+              if (!fields.some(f => f.label === label)) {
+                fields.push({ label, value });
+              }
+          });
+      }
+      
+      const usedFieldEntries = new Set();
+      
+      // Helper to find a field by ID or Label keywords
+      function popField(id, keywords) {
+          let found = null;
+          for (let i = 0; i < fields.length; i++) {
+              const f = fields[i];
+              const fId = (f._id || "").toLowerCase();
+              const fLabel = (f.label || "").toLowerCase();
+              
+              if (id && fId.includes(id.toLowerCase())) {
+                  found = f;
+                  usedFieldEntries.add(i);
+                  break; 
+              }
+              if (keywords && keywords.some(k => fLabel.includes(k.toLowerCase()))) {
+                  found = f;
+                  usedFieldEntries.add(i);
+              }
+          }
+          return found ? found.value : undefined;
       }
 
       const serviceName = b.bookedService?.name || b.bookedEntity?.title || "";
+      const isGroupActivity = serviceName.toLowerCase().includes("group");
+
+      // MAPPING LOGIC (Columns A-S standard)
+      let h = "", k = "", l = "", m = "", n = "", o = "", p = "", q = "", r = "", s = "";
+
+      if (isGroupActivity) {
+          h = popField("ddc54cc9-58c2-4719-a624-dff45aece64e", ["organization"]); 
+          k = popField("d2afd821-b61a-49dd-88f6-0c875d4bf9c9", ["age range"]); 
+          l = "n/a";
+          m = popField("18f379e7-7cb1-4d49-ab10-e58dde8c30d0", ["number of kids"]); 
+          n = popField("f2fcf0ee-a161-4441-8774-9dcfd94d959e", ["number of adults"]);
+          o = "n/a"; p = "n/a"; q = "n/a"; r = "n/a";
+          s = popField("3040c0ca-b567-41a7-abed-e10fc090fc43", ["details", "anything else", "message"]);
+      } else {
+          h = popField("8da98aba-a973-4da8-945b-4c7fde36fd53", ["birthday child"]); 
+          k = popField("ddc54cc9-58c2-4719-a624-dff45aece64e", ["age"]);
+          l = popField("3be35852-23cd-468a-8aa1-8cafa4fa73f2", ["banner", "lettering"]);
+          m = popField("d2afd821-b61a-49dd-88f6-0c875d4bf9c9", ["kids", "approximately"]); 
+          n = popField("a123bb4c-cd17-40d7-b8c9-76418c40851b", ["adults"]);
+          
+          const goodyVal = popField("01196b47-1ce2-44e0-9ae6-745d814752f2", ["goody bags"]);
+          o = (goodyVal === "Checked" || goodyVal === true) ? "TRUE" : "";
+          
+          const sandVal = popField("5951def1-1464-448e-97f3-d748c65c4c96", ["sand art"]);
+          p = (sandVal === "Checked" || sandVal === true) ? "TRUE" : "";
+          
+          const pinataVal = popField("5e8ab05a-915d-4ff4-b7fc-1e336a3ff66c", ["pinata"]);
+          q = (pinataVal === "Checked" || pinataVal === true) ? "TRUE" : "";
+          
+          const pastVal = popField("aaeef4dc-6c8f-4c67-a4cc-6bf98deda30b", ["booked with us"]);
+          r = (pastVal === "Checked" || pastVal === true) ? "TRUE" : "";
+          
+          s = popField("66923e81-1282-4689-bc32-08d3c020492c", ["anything else", "message", "note"]);
+      }
+
+      // Collect EXTRA Fields (Any field not used in A-V mapping)
+      const dynamicFields = [];
+      fields.forEach((f, index) => {
+          if (!usedFieldEntries.has(index)) {
+              if (f.label && f.value !== undefined) {
+                  dynamicFields.push(`${f.label}: ${f.value}`);
+              }
+          }
+      });
+      
       const bookingId = b._id;
       
       // Formatting Phone +1-XXX-XXX-XXXX
@@ -125,33 +181,6 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
         formattedPhone = `+1-${cleanPhone.slice(1,4)}-${cleanPhone.slice(4,7)}-${cleanPhone.slice(7)}`;
       }
 
-      // Check form type based on unique field presences or service name
-      const hasGroupField = (res["s_18f379e7_7cb1_4d49_ab10_e58dde8c30d0"] !== undefined || res["s_f2fcf0ee_a161_4441_8774_9dcfd94d959e"] !== undefined);
-      const isGroupActivity = hasGroupField || serviceName.toLowerCase().includes("group");
-
-      let h = "", k = "", l = "", m = "", n = "", o = "", p = "", q = "", r = "", s = "";
-
-      if (isGroupActivity) {
-        h = res["s_ddc54cc9_58c2_4719_a624_dff45aece64e"] || ""; 
-        k = res["s_d2afd821_b61a_49dd_88f6_0c875d4bf9c9"] || ""; 
-        l = "n/a";
-        m = res["s_18f379e7_7cb1_4d49_ab10_e58dde8c30d0"] || ""; 
-        n = res["s_f2fcf0ee_a161_4441_8774_9dcfd94d959e"] || "";
-        o = "n/a"; p = "n/a"; q = "n/a"; r = "n/a";
-        s = res["s_3040c0ca_b567_41a7_abed_e10fc090fc43"] || res["detected_note"] || "";
-      } else {
-        h = res["s_8da98aba_a973_4da8_945b_4c7fde36fd53"] || ""; 
-        k = res["s_ddc54cc9_58c2_4719_a624_dff45aece64e"] || "";
-        l = res["s_3be35852_23cd_468a_8aa1_8cafa4fa73f2"] || "";
-        m = res["s_d2afd821_b61a_49dd_88f6_0c875d4bf9c9"] || ""; 
-        n = res["s_a123bb4c_cd17_40d7_b8c9_76418c40851b"] || "";
-        o = res["c_01196b47_1ce2_44e0_9ae6_745d814752f2"] ? "TRUE" : "";
-        p = res["c_5951def1_1464_448e_97f3_d748c65c4c96"] ? "TRUE" : "";
-        q = res["c_5e8ab05a_915d_4ff4_b7fc_1e336a3ff66c"] ? "TRUE" : "";
-        r = res["c_aaeef4dc_6c8f_4c67_a4cc_6bf98deda30b"] ? "TRUE" : "";
-        s = res["s_66923e81_1282_4689_bc32_08d3c020492c"] || res["detected_note"] || "";
-      }
-
       function formatVancouverDate(isoStr) {
           if (!isoStr) return "";
           try {
@@ -162,16 +191,16 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
                   year: 'numeric', month: '2-digit', day: '2-digit',
                   hour: '2-digit', minute: '2-digit', second: '2-digit' };
               const f = new Intl.DateTimeFormat('en-US', opts).formatToParts(d);
-              const p = {}; f.forEach(pt => p[pt.type] = pt.value);
+              const p_opts = {}; f.forEach(pt => p_opts[pt.type] = pt.value);
               
-              const localMs = new Date(`${p.year}-${p.month}-${p.day}T${p.hour === '24' ? '00' : p.hour}:${p.minute}:${p.second}Z`).getTime();
+              const localMs = new Date(`${p_opts.year}-${p_opts.month}-${p_opts.day}T${p_opts.hour === '24' ? '00' : p_opts.hour}:${p_opts.minute}:${p_opts.second}Z`).getTime();
               let diffMins = Math.round((localMs - d.getTime()) / 60000);
               const sign = diffMins < 0 ? "-" : "+";
               diffMins = Math.abs(diffMins);
               const hrs = String(Math.floor(diffMins / 60)).padStart(2, '0');
               const mins = String(diffMins % 60).padStart(2, '0');
               
-              return `${p.year}-${p.month}-${p.day}T${p.hour === '24' ? '00' : p.hour}:${p.minute}:${p.second}.000${sign}${hrs}:${mins}`;
+              return `${p_opts.year}-${p_opts.month}-${p_opts.day}T${p_opts.hour === '24' ? '00' : p_opts.hour}:${p_opts.minute}:${p_opts.second}.000${sign}${hrs}:${mins}`;
           } catch(e) { return isoStr; }
       }
 
@@ -183,12 +212,19 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
       const staffMember = b.bookedEntity?.slot?.resource?.name || resourceNames || tags.find(t => t.tag === "STAFF")?.name || b.bookedEntity?.staffMember?.name || b.selectedSession?.staffMemberName || "";
       const internalNotes = b.adminNotes || b.internalNotes || b.notes || "";
 
-      return [
+      // Column V (index 21) is always bookingId. Anything after it is dynamic.
+      const row = [
         startDate, endDate, internalNotes, staffMember, serviceName,
         b.contactDetails?.firstName || "", b.contactDetails?.lastName || "", 
         h, formattedPhone, b.contactDetails?.email || "", k, l, m, n, o, p, q, r, s,
         "n/a", "n/a", bookingId
       ];
+
+      if (dynamicFields.length > 0) {
+          row.push(...dynamicFields);
+      }
+
+      return row;
     });
 
     console.log(`Sending ${mappedRows.length} bookings to Google Sheet...`);
@@ -209,7 +245,6 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
             return;
         }
 
-        // Add logging for Google Apps Script explicit errors
         if (jsonResponse.status === "error") {
             await logCritical("Production Sync App Error", "Google Apps Script returned an error", jsonResponse.message);
         } else {
