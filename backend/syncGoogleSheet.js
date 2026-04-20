@@ -106,21 +106,23 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
       function popField(id, keywords) {
           let found = null;
           for (let i = 0; i < fields.length; i++) {
+              if (usedFieldEntries.has(i)) continue; // Don't reuse fields
+
               const f = fields[i];
               const fId = (f._id || "").toLowerCase();
               const fLabel = (f.label || "").toLowerCase();
               
-              if (id && fId.includes(id.toLowerCase())) {
+              const idMatch = id && fId === id.toLowerCase();
+              const keywordMatch = keywords && keywords.some(k => fLabel.includes(k.toLowerCase()));
+
+              if (idMatch || keywordMatch) {
                   found = f;
                   usedFieldEntries.add(i);
-                  break; 
-              }
-              if (keywords && keywords.some(k => fLabel.includes(k.toLowerCase()))) {
-                  found = f;
-                  usedFieldEntries.add(i);
+                  break; // Found it, stop looking
               }
           }
-          return found ? found.value : undefined;
+          const val = found ? found.value : "";
+          return (val === null || val === undefined) ? "" : val;
       }
 
       const serviceName = b.bookedService?.name || b.bookedEntity?.title || "";
@@ -136,7 +138,7 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
           m = popField("18f379e7-7cb1-4d49-ab10-e58dde8c30d0", ["number of kids"]); 
           n = popField("f2fcf0ee-a161-4441-8774-9dcfd94d959e", ["number of adults"]);
           o = "n/a"; p = "n/a"; q = "n/a"; r = "n/a";
-          s = popField("3040c0ca-b567-41a7-abed-e10fc090fc43", ["details", "anything else", "message"]);
+          s = popField("3040c0ca-b567-41a7-abed-e10fc090fc43", ["details", "anything else", "message", "know"]);
       } else {
           h = popField("8da98aba-a973-4da8-945b-4c7fde36fd53", ["birthday child"]); 
           k = popField("ddc54cc9-58c2-4719-a624-dff45aece64e", ["age"]);
@@ -145,18 +147,18 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
           n = popField("a123bb4c-cd17-40d7-b8c9-76418c40851b", ["adults"]);
           
           const goodyVal = popField("01196b47-1ce2-44e0-9ae6-745d814752f2", ["goody bags"]);
-          o = (goodyVal === "Checked" || goodyVal === true) ? "TRUE" : "";
+          o = (goodyVal === "Checked" || goodyVal === true || goodyVal === "true") ? "TRUE" : "";
           
           const sandVal = popField("5951def1-1464-448e-97f3-d748c65c4c96", ["sand art"]);
-          p = (sandVal === "Checked" || sandVal === true) ? "TRUE" : "";
+          p = (sandVal === "Checked" || sandVal === true || sandVal === "true") ? "TRUE" : "";
           
           const pinataVal = popField("5e8ab05a-915d-4ff4-b7fc-1e336a3ff66c", ["pinata"]);
-          q = (pinataVal === "Checked" || pinataVal === true) ? "TRUE" : "";
+          q = (pinataVal === "Checked" || pinataVal === true || pinataVal === "true") ? "TRUE" : "";
           
           const pastVal = popField("aaeef4dc-6c8f-4c67-a4cc-6bf98deda30b", ["booked with us"]);
-          r = (pastVal === "Checked" || pastVal === true) ? "TRUE" : "";
+          r = (pastVal === "Checked" || pastVal === true || pastVal === "true") ? "TRUE" : "";
           
-          s = popField("66923e81-1282-4689-bc32-08d3c020492c", ["anything else", "message", "note"]);
+          s = popField("66923e81-1282-4689-bc32-08d3c020492c", ["anything else", "message", "note", "know"]);
       }
 
       // Collect EXTRA Fields (Any field not used in A-V mapping)

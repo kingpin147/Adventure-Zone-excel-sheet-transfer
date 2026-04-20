@@ -4,79 +4,92 @@ function doPost(e) {
     const bookings = payload.bookings || [];
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    // Ensures it targets Sheet1
     const sheet = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
+    
+    // Force Columns A and B to be Plain Text to prevent auto-formatting of dates
+    sheet.getRange("A:B").setNumberFormat("@");
 
-    // 1. RUN CLEANUP FIRST (Remove past bookings)
+    // 1. Run Cleanup (Remove past bookings)
     cleanupAndSortBookings();
 
     const lastRow = sheet.getLastRow();
+    const lastCol = Math.max(sheet.getLastColumn(), 22);
     
-    // Build ID map from Column V (index 21)
-    const bookingIdMap = {};
+    // Read all existing data into memory
+    let fullData = [];
     if (lastRow > 1) {
-      // Always read at least 22 columns to be safe for the ID column
-      const readCols = Math.max(sheet.getLastColumn(), 22);
-      const data = sheet.getRange(2, 1, lastRow - 1, readCols).getValues();
-      for (let i = 0; i < data.length; i++) {
-        const id = data[i][21]; // Column V (index 21) is our primary key
-        if (id) {
-          bookingIdMap[id] = i + 2;
-        }
+      fullData = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+    }
+
+    // Build ID map for fast lookup
+    const bookingIdMap = {};
+    for (let i = 0; i < fullData.length; i++) {
+      const id = fullData[i][21]; // Column V (index 21)
+      if (id) {
+        bookingIdMap[id] = i;
       }
     }
 
-    // 2. PROCESS INCOMING BOOKINGS
-    for (let i = 0; i < bookings.length; i++) {
-      const bRow = bookings[i];
-      
-      // Convert date strings to real Date objects so Sheets can sort/format them correctly
-      if (bRow[0]) bRow[0] = new Date(bRow[0].toString());
-      if (bRow[1]) bRow[1] = new Date(bRow[1].toString());
-
+    // 2. Process Incoming Bookings in memory
+    bookings.forEach(bRow => {
       const incomingId = bRow[21];
-      const incomingCols = bRow.length;
-
-      if (bookingIdMap[incomingId]) {
+      
+      if (bookingIdMap[incomingId] !== undefined) {
         // UPDATE EXISTING ROW
-        const rowNum = bookingIdMap[incomingId];
-        const currentRowCols = sheet.getLastColumn();
-        const targetCols = Math.max(currentRowCols, incomingCols);
+        const index = bookingIdMap[incomingId];
+        const existingRow = fullData[index];
 
-        // Ensure sheet is wide enough for the target range
-        const currentSheetMax = sheet.getMaxColumns();
-        if (targetCols > currentSheetMax) {
-          sheet.insertColumnsAfter(currentSheetMax, targetCols - currentSheetMax);
-        }
-
-        // Fetch existing row to preserve columns not provided or manually edited
-        const existingRow = sheet.getRange(rowNum, 1, 1, targetCols).getValues()[0];
-
-        // 1. Protect Manual Notes in Column C (index 2)
+        // Preserve Manual Notes in Column C (index 2)
         if (!bRow[2] || bRow[2].toString().trim() === "") {
           bRow[2] = existingRow[2];
         }
 
-        // 2. Expand bRow if existing row has more columns
-        for (let j = 0; j < targetCols; j++) {
-            if (bRow[j] === undefined) {
-                bRow[j] = existingRow[j] || "";
-            }
+        // Ensure current row in memory is long enough for any new dynamic columns
+        while (existingRow.length < bRow.length) {
+          existingRow.push("");
         }
 
-        sheet.getRange(rowNum, 1, 1, bRow.length).setValues([bRow]);
-
+        // Update the row values
+        for (let j = 0; j < bRow.length; j++) {
+          if (bRow[j] !== undefined && bRow[j] !== null) {
+            existingRow[j] = bRow[j];
+          }
+        }
       } else {
-        // APPEND NEW ROW
-        sheet.appendRow(bRow);
+        // ADD NEW ROW
+        fullData.push(bRow);
       }
+    });
+
+    // 3. Final Sort by Date (Column A)
+    fullData.sort((a, b) => {
+      const dateA = new Date(a[0]);
+      const dateB = new Date(b[0]);
+      return dateA - dateB;
+    });
+
+    // 4. Batch Write back to the sheet
+    if (fullData.length > 0) {
+      // Find the maximum column width needed
+      const maxCols = fullData.reduce((max, row) => Math.max(max, row.length), 0);
+      
+      // Pad all rows to match max width (required for setValues)
+      const paddedData = fullData.map(row => {
+        const newRow = [...row];
+        while (newRow.length < maxCols) newRow.push("");
+        return newRow;
+      });
+
+      // Clear the old data range and write the new batch
+      const currentLastRow = sheet.getLastRow();
+      if (currentLastRow > 1) {
+        sheet.getRange(2, 1, currentLastRow - 1, sheet.getLastColumn()).clearContent();
+      }
+      sheet.getRange(2, 1, paddedData.length, maxCols).setValues(paddedData);
     }
 
-    // Final Sort and Cleanup
-    cleanupAndSortBookings();
-
     return ContentService
-      .createTextOutput(JSON.stringify({ status: "success", parsedCount: bookings.length }))
+      .createTextOutput(JSON.stringify({ status: "success", count: bookings.length }))
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
@@ -86,41 +99,26 @@ function doPost(e) {
   }
 }
 
-/**
- * Removes rows where the date in Column A is before today.
- * Then sorts all data by Column A ascending.
- */
 function cleanupAndSortBookings() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
   const lastRow = sheet.getLastRow();
   
-  if (lastRow <= 1) return; // No data to process
+  if (lastRow <= 1) return;
 
-  // Determine "today" in Vancouver time
   const vancouverTodayStr = Utilities.formatDate(new Date(), "America/Vancouver", "yyyy-MM-dd");
-
-  const data = sheet.getRange(2, 1, lastRow - 1, 1).getValues(); // Get Column A only
+  const data = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
   
-  // Iterate backwards when deleting rows to keep indices correct
   for (let i = data.length - 1; i >= 0; i--) {
     let rowVal = data[i][0];
     if (!rowVal) continue;
 
     let rowDate = (rowVal instanceof Date) ? rowVal : new Date(rowVal.toString());
-
     if (!isNaN(rowDate.getTime())) {
       const rowDateStr = Utilities.formatDate(rowDate, "America/Vancouver", "yyyy-MM-dd");
       if (rowDateStr < vancouverTodayStr) {
         sheet.deleteRow(i + 2);
       }
     }
-  }
-
-  // SORT REMAINING DATA
-  const newLastRow = sheet.getLastRow();
-  if (newLastRow > 1) {
-    const sortRange = sheet.getRange(2, 1, newLastRow - 1, sheet.getLastColumn());
-    sortRange.sort({column: 1, ascending: true});
   }
 }

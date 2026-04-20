@@ -78,47 +78,65 @@ export function getMappedRow(b, bookingId) {
         s = res["s_66923e81_1282_4689_bc32_08d3c020492c"] || "";
     }
 
-    function formatVancouverDate(isoStr) {
-        if (!isoStr) return "";
-        try {
-            const d = new Date(isoStr);
-            if (isNaN(d.getTime())) return isoStr;
+    // Helper to find a field by ID or Label keywords
+    function popField(id, keywords) {
+        let found = null;
+        for (let i = 0; i < fields.length; i++) {
+            if (usedFieldEntries.has(i)) continue;
+
+            const f = fields[i];
+            const fId = (f._id || "").toLowerCase();
+            const fLabel = (f.label || "").toLowerCase();
             
-            const opts = { timeZone: 'America/Vancouver', hour12: false,
-                year: 'numeric', month: '2-digit', day: '2-digit',
-                hour: '2-digit', minute: '2-digit', second: '2-digit' };
-            const f = new Intl.DateTimeFormat('en-US', opts).formatToParts(d);
-            const pr = {}; f.forEach(pt => pr[pt.type] = pt.value);
-            
-            const localMs = new Date(`${pr.year}-${pr.month}-${pr.day}T${pr.hour === '24' ? '00' : pr.hour}:${pr.minute}:${pr.second}Z`).getTime();
-            let diffMins = Math.round((localMs - d.getTime()) / 60000);
-            const sign = diffMins < 0 ? "-" : "+";
-            diffMins = Math.abs(diffMins);
-            const hrs = String(Math.floor(diffMins / 60)).padStart(2, '0');
-            const mins = String(diffMins % 60).padStart(2, '0');
-            
-            return `${pr.year}-${pr.month}-${pr.day}T${pr.hour === '24' ? '00' : pr.hour}:${pr.minute}:${pr.second}.000${sign}${hrs}:${mins}`;
-        } catch(e) { return isoStr; }
+            const idMatch = id && fId === id.toLowerCase();
+            const keywordMatch = keywords && keywords.some(k => fLabel.includes(k.toLowerCase()));
+
+            if (idMatch || keywordMatch) {
+                found = f;
+                usedFieldEntries.add(i);
+                break;
+            }
+        }
+        const val = found ? found.value : "";
+        return (val === null || val === undefined) ? "" : val;
     }
 
-    const startDate = formatVancouverDate(b.startDate || b.selectedSession?.start?.timestamp || "");
-    const endDate = formatVancouverDate(b.endDate || b.selectedSession?.end?.timestamp || "");
+    const serviceName = b.bookedService?.name || b.bookedEntity?.title || "";
+    const isGroupActivity = serviceName.toLowerCase().includes("group");
 
-    const tags = b.bookedEntity?.tags || [];
-    const resourceNames = tags.filter(t => t.tag === "RESOURCE" || t.tag === "LOCATION").map(t => t.name).join(", ");
-    const staffMember = b.bookedEntity?.slot?.resource?.name || resourceNames || tags.find(t => t.tag === "STAFF")?.name || b.bookedEntity?.staffMember?.name || b.selectedSession?.staffMemberName || "";
+    // Track used fields to avoid duplicates in dynamic columns
+    const usedFieldEntries = new Set();
 
-    const internalNotes = b.adminNotes || b.internalNotes || b.notes || "";
-
-    return [
-        startDate, endDate, 
-        internalNotes, staffMember, 
-        serviceName, b.contactDetails?.firstName || "", b.contactDetails?.lastName || "", 
-        h, formattedPhone, b.contactDetails?.email || "", k, 
-        l, m, n, o, p, q, r,
-        s, "n/a", "n/a", bookingId
-    ];
-}
+    let h = "", k = "", l = "", m = "", n = "", o = "", p = "", q = "", r = "", s = "";
+    if (isGroupActivity) {
+        h = popField("ddc54cc9-58c2-4719-a624-dff45aece64e", ["organization"]); 
+        k = popField("d2afd821-b61a-49dd-88f6-0c875d4bf9c9", ["age range"]); 
+        l = "n/a";
+        m = popField("18f379e7-7cb1-4d49-ab10-e58dde8c30d0", ["number of kids"]); 
+        n = popField("f2fcf0ee-a161-4441-8774-9dcfd94d959e", ["number of adults"]);
+        o = "n/a"; p = "n/a"; q = "n/a"; r = "n/a";
+        s = popField("3040c0ca-b567-41a7-abed-e10fc090fc43", ["details", "anything else", "message", "know"]);
+    } else {
+        h = popField("8da98aba-a973-4da8-945b-4c7fde36fd53", ["birthday child"]); 
+        k = popField("ddc54cc9-58c2-4719-a624-dff45aece64e", ["age"]);
+        l = popField("3be35852-23cd-468a-8aa1-8cafa4fa73f2", ["banner", "lettering"]);
+        m = popField("d2afd821-b61a-49dd-88f6-0c875d4bf9c9", ["kids", "approximately"]); 
+        n = popField("a123bb4c-cd17-40d7-b8c9-76418c40851b", ["adults"]);
+        
+        const goodyVal = popField("01196b47-1ce2-44e0-9ae6-745d814752f2", ["goody bags"]);
+        o = (goodyVal === "Checked" || goodyVal === true || goodyVal === "true") ? "TRUE" : "";
+        
+        const sandVal = popField("5951def1-1464-448e-97f3-d748c65c4c96", ["sand art"]);
+        p = (sandVal === "Checked" || sandVal === true || sandVal === "true") ? "TRUE" : "";
+        
+        const pinataVal = popField("5e8ab05a-915d-4ff4-b7fc-1e336a3ff66c", ["pinata"]);
+        q = (pinataVal === "Checked" || pinataVal === true || pinataVal === "true") ? "TRUE" : "";
+        
+        const pastVal = popField("aaeef4dc-6c8f-4c67-a4cc-6bf98deda30b", ["booked with us"]);
+        r = (pastVal === "Checked" || pastVal === true || pastVal === "true") ? "TRUE" : "";
+        
+        s = popField("66923e81-1282-4689-bc32-08d3c020492c", ["anything else", "message", "note", "know"]);
+    }
 
 // --- 2. MAIN TRIGGER (On Update) ---
 export async function wixBookingsV2_onBookingUpdated(event) {
