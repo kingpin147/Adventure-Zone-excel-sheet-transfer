@@ -63,3 +63,29 @@ I recommend running one final "Live Data Dry Run" where I output the result to a
 
 
 clients reply to questions
+I believe I can answer just about all of this already.
+
+The v1 bookings should be cancelled after successful creation of v2 booking to avoid clutter in the calendar.
+
+The services, rooms, and staff are unaffected by this transition. Only the booking forms (and field keys) are changed. When I did the dry run test, it was able to find the v1 data and properly match the responses to the new field keys from what I could tell. 
+
+Good call on the automations.i think I read somewhere that you can write in the code not to send emails to customers when creating these new bookings, bus it might be wise to disable the automations temporarily to be safe. Same with the notification emails we receive.
+
+I think the 10 day schedule should be fine for now. Besides, if the v1 bookings are cancelled once the v2 are successfully created, what will the v1 listener find? 
+
+There are no new fields or information in the v2 forms. They are duplicates of the initial ones, just with new field codes (and the group activity form no longer has unnecessary fields)
+
+I'm not sure if this will be relevant since the v1 bookings should end up being cancelled, but I was thinking it might be a good idea to set the code to only grab data for bookings created starting April 23, 2026. That way, it would skip over any v1 data that might get mixed in for some reason
+
+reply to client
+
+I agree. The "10-day scheduled sync" is sufficient for catching any stragglers, and once a booking is moved to V2 and cancelled in V1, the V1 entity becomes "dead" and won't be edited. We will proceed without the V1 listener for now to keep the project lean.
+
+but migration from v1 to v2 is more critical as we have live bookings ... then need to check if the previously implementation would also work for new v2
+
+
+new reply of client
+
+The migration of the live bookings logically should be pretty straightforward with the migration code I have in the backend. It seemed to find all the upcoming live bookings and map the data into the new fields properly. 
+
+By checking if the previous implementation will work for v2, do you mean the code you wrote? My guess would be that it won't work, as in v1 the custom fields were stored as an array within the customer info, while now they're separate entities in a form submission. I also believe there are different commands and such for v2. But I'll leave that to you to research. I'm not the most knowledgeable about that

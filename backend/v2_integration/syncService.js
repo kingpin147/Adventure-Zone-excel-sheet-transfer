@@ -1,7 +1,7 @@
 import { fetch } from 'wix-fetch';
 import { getSecret } from 'wix-secrets-backend';
 import wixData from 'wix-data';
-import { mapBookingToRow } from './mapping.js';
+import { mapBookingToRow } from './mapping';
 
 /**
  * Sends a list of bookings to the Google Sheet.

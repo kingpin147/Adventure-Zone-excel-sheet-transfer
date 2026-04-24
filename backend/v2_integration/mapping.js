@@ -6,7 +6,7 @@
 /**
  * Formats a phone number to +1-XXX-XXX-XXXX
  */
-export function formatPhone(rawPhone) {
+function formatPhone(rawPhone) {
     if (!rawPhone) return "";
     const clean = rawPhone.replace(/[^\d]/g, "");
     if (clean.length === 10) {
@@ -20,7 +20,7 @@ export function formatPhone(rawPhone) {
 /**
  * Formats date to Vancouver Time with Offset
  */
-export function formatVancouverDate(isoStr) {
+function formatVancouverDate(isoStr) {
     if (!isoStr) return "";
     try {
         const d = new Date(isoStr);
@@ -46,7 +46,7 @@ export function formatVancouverDate(isoStr) {
 /**
  * Maps a Wix Booking object to a Google Sheet Row (Array)
  */
-export function mapBookingToRow(booking) {
+function mapBookingToRow(booking) {
     const b = booking.booking || booking;
     const bookingId = b._id;
     
@@ -151,3 +151,5 @@ export function mapBookingToRow(booking) {
     
     return row;
 }
+
+export { formatPhone, formatVancouverDate, mapBookingToRow };
