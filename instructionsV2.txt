@@ -1,0 +1,65 @@
+Fascinating. It's clear from the payload that the data is being stored as v1, and seems to be set in stone from the time of booking. I guess because in v1 it was not possible to edit the booking form. I'm not sure where I go from here, but I'll touch base if there's something I need extra help with or if I have questions
+
+
+you need to fix the code to be fully v2 functional? 
+It seems like there should be a way to migrate existing data to basically create new bookings to be stored under the v2 structure. Are you familiar with this process? I've asked Wix if they can assist with that but I'm not sure how that will work. I may be able to do it myself and I may not, I have no idea. If you are somewhat familiar with the process, it might be faster and more efficient for you to do it. 
+Please let me know what budget you'd be looking for to just fix the code and also if you need to help with the migration of data. I just need to let my boss know so he can decide if he's ok with it
+
+
+It looks like I was able to set up the new forms and get the migration code set up. I just ran out of time to actually go through the migration
+
+
+Would that include the migration of the data as well? At least for future bookings. I believe the bulk of the work on that is done, just needs to be a non "dry run" and verify that it's all good
+
+
+Also how soon could you have it done? I don't like being in the middle of this kind of transition longer than necessary
+
+
+
+is that possible ?
+
+
+as wix support says
+
+
+From Wix:
+
+this could be happening because your sync is likely built around v2 events/webhooks, it may not be "listening" for changes made to v1 booking entities at all.
+
+Based off the information I'm seeing for possbile fixes, Open your events.js file and confirm whether you are using wix-bookings-backend events or wix-bookings (v2) events. If you are only subscribed to v2 webhooks, edits to v1 bookings will be silently missed.
+
+attaching additional information on this fix. https://dev.wix.com/docs/velo/apis/wix-media-backend/importing-and-uploading-files
+
+Answering your question on what happens if you migrate to V2. 
+
+Migrating to V2 involves understanding how Wix handles deprecated APIs and the coexistence of different versions. Below are the technical details regarding your bookings, forms, and code structure. 
+
+Attaching information on this as well.  https://dev.wix.com/docs/velo/apis/wix-bookings-v2/bookings/introduction
+
+
+
+Not sure if any of that makes sense to you. It doesn't seem to clarify anything to me. Plus it seems like if there's v1 involved, any solution we come up with will be obsolete in a couple of months?
+
+
+my understanding of all of this is that basically, the best option is to create new booking forms which will be fully v2 forms. it seems like the old bookings will retain the field id's even though the form itself no longer exists, and we would need the code to map all 4 sets of field id's accordingly (the old party form, the old group activity form, the new party form, and the new group activity form). My best guess is that because the v1 forms were not meant to be edited, they don't store edits anywhere and therefore are not available to the API. Does this sound like the most likely reality and best solution? Are you ok to help fix the code once I make the switch (if that is what needs to be done)
+
+
+Critical Questions to Answer Before Final Implementation
+To ensure nothing is missed, these are the questions that need answers:
+
+1. The "Double Booking" Risk
+Question: When we migrate a booking (re-create it as V2), the old V1 booking will still exist in the system. Should the script automatically cancel the old V1 booking after successfully creating the V2 version to avoid double-counting in your calendars?
+2. Service & Resource Verification
+Question: Are the Service IDs in the migration script (d0c249..., etc.) exactly matched to the new V2 services? If the IDs changed during the V2 setup, the migration will fail or link to the wrong services.
+Question: Do the Room and Staff names match perfectly between V1 and V2? If not, we need a "translation table" so the Google Sheet doesn't show "n/a" for rooms.
+3. Automation Triggers
+Question: Do you have any Wix Automations (like "Send Thank You Email") active? If so, creating "new" bookings during migration might trigger a flood of emails to clients who already booked weeks ago. Do we need to temporarily disable these during the migration?
+4. The "Real-Time" Gap
+Question: Wix support mentioned that V1 edits are "silently missed" because we only listen to V2 webhooks. Do you want to add a V1 listener for the next few weeks until the migration is 100% finished, or is the 10-day scheduled sync enough for now?
+5. Google Sheet Structure
+Question: With the new V2 forms, are there new pieces of information you are collecting that aren't in the current Google Sheet? If so, we should add those columns now so the data has a place to go.
+Recommended Next Step
+I recommend running one final "Live Data Dry Run" where I output the result to a test CMS collection instead of just the console. This will let you see exactly how the data looks in a "database" format before we push it to the live Bookings system.
+
+
+clients reply to questions
