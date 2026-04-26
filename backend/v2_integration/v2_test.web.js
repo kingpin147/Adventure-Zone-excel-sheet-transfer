@@ -1,6 +1,7 @@
 import { Permissions, webMethod } from "wix-web-module";
 import { extendedBookings } from '@wix/bookings';
 import { auth } from '@wix/essentials';
+import { submissions } from 'wix-forms.v2';
 import { mapBookingToRow } from './mapping';
 
 /**
@@ -18,7 +19,6 @@ export const testV2Mapping = webMethod(Permissions.Admin, async () => {
         const results = await elevatedQuery({
             pagingMetadata: { limit: 5 }
         });
-
         const items = results.extendedBookings || [];
 
         if (items.length === 0) {
@@ -27,10 +27,26 @@ export const testV2Mapping = webMethod(Permissions.Admin, async () => {
                 count: 0
             };
         }
+        
+        // 3. Fetch latest form submissions for these bookings
+        const elevatedGetSubmission = auth.elevate(submissions.getSubmission);
+        const submissionsByBookingId = {};
+        
+        console.log("Fetching latest form submissions for test bookings...");
+        await Promise.all(items.map(async (rb) => {
+            const b = rb.booking || rb;
+            if (!b.formSubmissionId) return;
+            try {
+                const sub = await elevatedGetSubmission(b.formSubmissionId);
+                if (sub) submissionsByBookingId[b._id] = sub;
+            } catch (err) {
+                console.warn(`Could not fetch submission for booking ${b._id}:`, err.message);
+            }
+        }));
 
-        // 2. Map them and return a detailed report
+        // 4. Map them and return a detailed report
         const report = items.map(booking => {
-            const row = mapBookingToRow(booking);
+            const row = mapBookingToRow(booking, submissionsByBookingId);
             return {
                 clientName: `${booking.contactDetails?.firstName || ""} ${booking.contactDetails?.lastName || ""}`,
                 bookingId: booking._id,

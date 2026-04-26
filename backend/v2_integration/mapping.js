@@ -46,7 +46,7 @@ function formatVancouverDate(isoStr) {
 /**
  * Maps a Wix Booking object to a Google Sheet Row (Array)
  */
-function mapBookingToRow(booking) {
+function mapBookingToRow(booking, submissionsByBookingId = {}) {
     const b = booking.booking || booking;
     const bookingId = b._id;
     
@@ -64,6 +64,28 @@ function mapBookingToRow(booking) {
             // Check if we already have it to avoid duplicates
             if (!fields.some(f => f._id === key || f.label === key)) {
                 fields.push({ _id: key, label: key, value: value });
+            }
+        });
+    }
+
+    // 1.1 Overlay latest submission data if available (fixes edited responses)
+    const latestSubmission = submissionsByBookingId[b._id];
+    if (latestSubmission && latestSubmission.submission && latestSubmission.submission.submissions) {
+        // Logging one sample for verification as requested by Wix
+        if (Object.keys(submissionsByBookingId)[0] === b._id) {
+            console.log(`Sample V2 Submission Keys for ${b._id}:`, JSON.stringify(latestSubmission.submission.submissions));
+        }
+
+        Object.entries(latestSubmission.submission.submissions).forEach(([key, value]) => {
+            // Normalize key (e.g., s_8da98aba_a973_4da8_945b_4c7fde36fd53 -> 8da98aba-a973-4da8-945b-4c7fde36fd53)
+            const normalizedId = key.replace(/^[sc]_/i, '').replace(/_/g, '-');
+            const existingIdx = fields.findIndex(f =>
+                (f._id || '').toLowerCase() === normalizedId.toLowerCase()
+            );
+            if (existingIdx >= 0) {
+                fields[existingIdx].value = value;
+            } else {
+                fields.push({ _id: normalizedId, value: value, label: '' });
             }
         });
     }

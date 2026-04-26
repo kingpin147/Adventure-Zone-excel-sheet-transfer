@@ -1,6 +1,7 @@
 import { extendedBookings } from '@wix/bookings';
 import { auth } from '@wix/essentials';
 import wixData from 'wix-data';
+import { submissions } from 'wix-forms.v2';
 import { syncBookingsToSheet } from './syncService';
 
 /**
@@ -42,10 +43,26 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
 
         // 3. Sort chronologically by startTime
         allResults.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+        
+        // 4. Fetch up-to-date form submissions via Wix Forms v2
+        const elevatedGetSubmission = auth.elevate(submissions.getSubmission);
+        const submissionsByBookingId = {};
+        
+        console.log("Fetching latest form submissions for edited responses...");
+        await Promise.all(allResults.map(async (rb) => {
+            const b = rb.booking || rb;
+            if (!b.formSubmissionId) return;
+            try {
+                const sub = await elevatedGetSubmission(b.formSubmissionId);
+                if (sub) submissionsByBookingId[b._id] = sub;
+            } catch (err) {
+                console.warn(`Could not fetch submission for booking ${b._id}:`, err.message);
+            }
+        }));
 
-        // 4. Send to Google Sheets via syncService
+        // 5. Send to Google Sheets via syncService
         console.log(`Processing ${allResults.length} bookings for Google Sheets...`);
-        await syncBookingsToSheet(allResults);
+        await syncBookingsToSheet(allResults, submissionsByBookingId);
 
     } catch (err) {
         console.error("Sync Job Failed:", err.message);

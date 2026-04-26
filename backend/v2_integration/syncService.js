@@ -6,12 +6,12 @@ import { mapBookingToRow } from './mapping';
 /**
  * Sends a list of bookings to the Google Sheet.
  */
-export async function syncBookingsToSheet(bookings) {
+export async function syncBookingsToSheet(bookings, submissionsByBookingId = {}) {
     if (!bookings || bookings.length === 0) return;
 
     try {
         const GOOGLE_SCRIPT_URL = await getSecret("GOOGLE_SCRIPT_URL");
-        const rows = bookings.map(b => mapBookingToRow(b));
+        const rows = bookings.map(b => mapBookingToRow(b, submissionsByBookingId));
 
         const response = await fetch(GOOGLE_SCRIPT_URL, {
             method: 'POST',
