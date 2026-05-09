@@ -5,7 +5,7 @@ import wixData from 'wix-data';
 const wixBookingsV1 = require('wix-bookings-backend');
 
 // SET TO FALSE TO RUN FOR REAL
-const DRY_RUN = true; 
+const DRY_RUN = false; 
 const START_DATE = new Date("2026-04-23T00:00:00Z");
 
 export const runV2Migration = webMethod(Permissions.Admin, async () => {
@@ -56,11 +56,15 @@ async function migrateItems(items, serviceId, type) {
         
         const bookingInfo = {
             "serviceId": serviceId,
-            "slot": { 
-                "startTime": old.bookedEntity.singleSession.start, 
-                "endTime": old.bookedEntity.singleSession.end 
+            "bookedEntity": {
+                "slot": { 
+                    "sessionId": old.bookedEntity.singleSession.sessionId,
+                    "startDate": old.bookedEntity.singleSession.start, 
+                    "endDate": old.bookedEntity.singleSession.end 
+                }
             },
             "contactDetails": old.formInfo.contactDetails,
+            "numberOfParticipants": 1,
             "formSubmission": payload
         };
 
@@ -70,29 +74,35 @@ async function migrateItems(items, serviceId, type) {
             await logDryRunToCMS(old, bookingInfo, type);
             count++;
         } else {
+            // LIVE RUN
             try {
-                // 1. Create V2 Booking
-                const elevatedCreate = auth.elevate(bookings.createBooking);
-                const newBooking = await elevatedCreate(bookingInfo, {
-                    participantNotification: { notifyParticipants: false }
+                // Pre-log the attempt just in case V2 creation fails after V1 cancellation
+                await logErrorToCMS("Migration Attempt", `Starting migration for ${old._id}`);
+
+                // 1. Cancel the old V1 booking FIRST to free up session capacity
+                const elevatedCancel = auth.elevate(bookings.cancelBooking);
+                await elevatedCancel(old._id, {
+                    participantNotification: { notifyParticipants: false },
+                    flowControlSettings: { ignoreCancellationPolicy: true }
                 });
-                
-                // 2. If successful, cancel the old V1 booking
-                if (newBooking) {
-                    try {
-                        const elevatedCancel = auth.elevate(bookings.cancelBooking);
-                        await elevatedCancel(old._id, {
-                            participantNotification: { notifyParticipants: false }
-                        });
+
+                // 2. Create V2 Booking now that the spot is free
+                try {
+                    const elevatedCreate = auth.elevate(bookings.createBooking);
+                    const newBooking = await elevatedCreate(bookingInfo, {
+                        participantNotification: { notifyParticipants: false }
+                    });
+                    
+                    if (newBooking) {
                         count++;
-                    } catch (cancelErr) {
-                        console.error(`Migration success (V2 Created) but V1 Cancel failed for ${old._id}:`, cancelErr.message);
-                        await logErrorToCMS("Cleanup Failed", `V2 created but V1 cancel failed for ${old._id}: ${cancelErr.message}`);
                     }
+                } catch (createErr) {
+                    console.error(`CRITICAL: V1 Cancelled but V2 Create failed for ${old._id}:`, createErr.message);
+                    await logErrorToCMS("CRITICAL FAILURE", `V1 booking ${old._id} was cancelled, but V2 creation failed! Data: ${JSON.stringify(bookingInfo)}. Error: ${createErr.message}`);
                 }
             } catch (err) {
-                console.error(`Migration Failed for ${old._id}:`, err.message);
-                await logErrorToCMS("Creation Failed", `Booking ${old._id} failed: ${err.message}`);
+                console.error(`Migration Failed for ${old._id} (could not cancel V1):`, err.message);
+                await logErrorToCMS("Cancel Failed", `Booking ${old._id} could not be cancelled: ${err.message}`);
             }
         }
     }
