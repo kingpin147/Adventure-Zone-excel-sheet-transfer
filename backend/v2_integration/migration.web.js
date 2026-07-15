@@ -2,17 +2,88 @@ import { Permissions, webMethod } from "wix-web-module";
 import { bookings } from '@wix/bookings';
 import { auth } from '@wix/essentials';
 import wixData from 'wix-data';
+import { forms } from 'wix-forms.v2';
 const wixBookingsV1 = require('wix-bookings-backend');
 
 // SET TO FALSE TO RUN FOR REAL
 const DRY_RUN = false; 
 const START_DATE = new Date("2026-04-23T00:00:00Z");
 
+/**
+ * Run the V1-to-V2 bookings migration.
+ * Safe flow: Creates V2 booking, confirms V2 booking, cancels V1 booking.
+ */
 export const runV2Migration = webMethod(Permissions.Admin, async () => {
-    // ===== PHASE 2: CONFIRM ALL RECOVERED BOOKINGS =====
-    // The recovered bookings have status "CREATED" and need to be confirmed
-    // so they appear on the calendar and in the Google Sheet sync
+    const birthdayServices = [
+        "d0c2496b-536b-434e-92cf-f637cc69d610", 
+        "bf6e95c2-275e-4c24-8926-886a10cfb5f2", 
+        "18601f51-8af0-44c2-af61-4e773f0c7a68", 
+        "006d8b0f-f142-4dc5-b4d6-e9937eed6937"
+    ];
+    const groupService = "5eb1b06e-2dbd-438c-b83a-977fe736db6e";
 
+    try {
+        console.log("Fetching booking forms in V2 namespace...");
+        const BOOKING_FORMS_NAMESPACE = "wix.bookings.v2.bookings";
+        const elevatedListForms = auth.elevate(forms.listForms);
+        const { forms: bookingForms } = await elevatedListForms(BOOKING_FORMS_NAMESPACE, { enabled: true });
+
+        const birthdayForm = bookingForms.find(f => (f.fields || []).some(field => field.target === "bp_birthday_child"));
+        const groupForm = bookingForms.find(f => (f.fields || []).some(field => field.target === "ga_org"));
+
+        if (!birthdayForm || !groupForm) {
+            throw new Error(`Could not find active forms. Birthday Form found: ${!!birthdayForm}, Group Form found: ${!!groupForm}`);
+        }
+
+        console.log(`Forms detected. Birthday Form ID: ${birthdayForm._id}, Group Form ID: ${groupForm._id}`);
+
+        // 1. Get all future bookings from V1 created after START_DATE with active status
+        const v1Query = await wixBookingsV1.bookings.queryBookings()
+            .gt("startTime", new Date().toISOString()) 
+            .ge("_createdDate", START_DATE)
+            .hasSome("status", ["CONFIRMED", "PENDING"])
+            .limit(100)
+            .find();
+
+        const allFuture = v1Query.items;
+        console.log(`Found ${allFuture.length} future V1 bookings for migration.`);
+
+        let totalCount = 0;
+        let results = [];
+
+        // 2. Migrate Birthday Parties
+        for (const sId of birthdayServices) {
+            const matches = allFuture.filter(b => b.bookedEntity?.serviceId === sId);
+            const count = await migrateItems(matches, sId, "BIRTHDAY", birthdayForm._id, groupForm._id);
+            results.push(`Service ${sId} (Birthday): ${count} bookings processed.`);
+            totalCount += count;
+        }
+
+        // 3. Migrate Group Activities
+        const groupMatches = allFuture.filter(b => b.bookedEntity?.serviceId === groupService);
+        const gCount = await migrateItems(groupMatches, groupService, "GROUP", birthdayForm._id, groupForm._id);
+        results.push(`Service ${groupService} (Group): ${gCount} bookings processed.`);
+        totalCount += gCount;
+
+        return {
+            summary: results,
+            total: totalCount,
+            status: DRY_RUN ? "DRY RUN COMPLETED" : "LIVE MIGRATION COMPLETED"
+        };
+    } catch (err) {
+        console.error("Migration script failed:", err.message);
+        await logErrorToCMS("Migration Failed", err.message);
+        return {
+            status: "FAILED",
+            error: err.message
+        };
+    }
+});
+
+/**
+ * Helper method to confirm any bookings still left in "CREATED" status.
+ */
+export const confirmAllCreatedBookings = webMethod(Permissions.Admin, async () => {
     const elevatedQuery = auth.elevate(bookings.queryBookings);
     const result = await elevatedQuery({
         filter: {
@@ -53,7 +124,78 @@ export const runV2Migration = webMethod(Permissions.Admin, async () => {
     };
 });
 
+async function migrateItems(items, serviceId, type, birthdayFormId, groupFormId) {
+    let count = 0;
+    for (const old of items) {
+        const payload = type === "BIRTHDAY" ? mapBirthdayToV2(old) : mapGroupToV2(old);
+        
+        // Construct formFields in V2 format: array of { fieldId, value }
+        const formFields = Object.entries(payload).map(([key, val]) => ({
+            fieldId: key,
+            value: val
+        }));
 
+        const bookingInfo = {
+            "serviceId": serviceId,
+            "bookedEntity": {
+                "slot": { 
+                    "sessionId": old.bookedEntity.singleSession.sessionId,
+                    "startDate": old.bookedEntity.singleSession.start, 
+                    "endDate": old.bookedEntity.singleSession.end 
+                }
+            },
+            "contactDetails": old.formInfo.contactDetails,
+            "numberOfParticipants": 1,
+            "formSubmission": {
+                "formId": type === "BIRTHDAY" ? birthdayFormId : groupFormId,
+                "fields": formFields
+            }
+        };
+
+        if (DRY_RUN) {
+            console.log(`[DRY RUN] Would migrate: ${old.formInfo.contactDetails.firstName} for service ${serviceId}`);
+            // Log to CMS for visual verification
+            await logDryRunToCMS(old, bookingInfo, type);
+            count++;
+        } else {
+            // LIVE RUN
+            try {
+                await logErrorToCMS("Migration Attempt", `Starting migration for ${old._id}`);
+
+                // Try creating V2 first (safest - V1 is NOT cancelled under any circumstances before V2 is confirmed)
+                const elevatedCreate = auth.elevate(bookings.createBooking);
+                const newBooking = await elevatedCreate(bookingInfo, {
+                    participantNotification: { notifyParticipants: false }
+                });
+
+                // If V2 was created successfully, confirm it
+                if (newBooking && newBooking._id) {
+                    const elevatedConfirm = auth.elevate(bookings.confirmBooking);
+                    await elevatedConfirm(newBooking._id, {
+                        participantNotification: { notifyParticipants: false }
+                    });
+
+                    // Cancel V1 only now that V2 is safely created & confirmed
+                    try {
+                        const elevatedCancel = auth.elevate(bookings.cancelBooking);
+                        await elevatedCancel(old._id, {
+                            participantNotification: { notifyParticipants: false },
+                            flowControlSettings: { ignoreCancellationPolicy: true }
+                        });
+                    } catch (cancelErr) {
+                        console.warn(`V2 created & confirmed, but V1 cancel failed for ${old._id}: ${cancelErr.message}`);
+                    }
+                    count++;
+                }
+
+            } catch (err) {
+                console.error(`Migration Failed for ${old._id}:`, err.message);
+                await logErrorToCMS("Migration Failed", `Booking ${old._id} could not be migrated: ${err.message}`);
+            }
+        }
+    }
+    return count;
+}
 
 async function logErrorToCMS(title, message) {
     try {

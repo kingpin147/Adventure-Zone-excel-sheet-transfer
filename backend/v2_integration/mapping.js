@@ -70,22 +70,38 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
 
     // 1.1 Overlay latest submission data if available (fixes edited responses)
     const latestSubmission = submissionsByBookingId[b._id];
-    if (latestSubmission && latestSubmission.submission && latestSubmission.submission.submissions) {
+    const submissionData = latestSubmission ? (latestSubmission.submissions || (latestSubmission.submission && latestSubmission.submission.submissions)) : null;
+    if (submissionData) {
         // Logging one sample for verification as requested by Wix
         if (Object.keys(submissionsByBookingId)[0] === b._id) {
-            console.log(`Sample V2 Submission Keys for ${b._id}:`, JSON.stringify(latestSubmission.submission.submissions));
+            console.log(`Sample V2 Submission Keys for ${b._id}:`, JSON.stringify(submissionData));
         }
 
-        Object.entries(latestSubmission.submission.submissions).forEach(([key, value]) => {
-            // Normalize key (e.g., s_8da98aba_a973_4da8_945b_4c7fde36fd53 -> 8da98aba-a973-4da8-945b-4c7fde36fd53)
-            const normalizedId = key.replace(/^[sc]_/i, '').replace(/_/g, '-');
+        Object.entries(submissionData).forEach(([key, value]) => {
+            // Check if it matches a V1 GUID key format: s_8da98aba_a973_4da8_945b_4c7fde36fd53
+            const isV1Pattern = /^[sc]_[0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12}$/i.test(key);
+            
+            let normalizedId = key;
+            if (isV1Pattern) {
+                normalizedId = key.replace(/^[sc]_/i, '').replace(/_/g, '-');
+            } else if (key.startsWith('s_') || key.startsWith('c_')) {
+                // For V2 fields starting with prefix but not matching V1 pattern
+                normalizedId = key.substring(2);
+            }
+
             const existingIdx = fields.findIndex(f =>
-                (f._id || '').toLowerCase() === normalizedId.toLowerCase()
+                (f._id || '').toLowerCase() === normalizedId.toLowerCase() ||
+                (f._id || '').toLowerCase() === key.toLowerCase()
             );
             if (existingIdx >= 0) {
                 fields[existingIdx].value = value;
             } else {
+                // Add the normalized key
                 fields.push({ _id: normalizedId, value: value, label: '' });
+                // Also add the raw key if it differs, ensuring maximum compatibility
+                if (normalizedId !== key) {
+                    fields.push({ _id: key, value: value, label: '' });
+                }
             }
         });
     }
