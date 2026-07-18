@@ -6,8 +6,10 @@ import { runV2Migration } from './migration.web';
  * This will NOT create actual V2 bookings or cancel V1 bookings.
  * Instead, it will output results to the 'MigrationTestResults' CMS collection.
  */
-export const testDryRun = webMethod(Permissions.Admin, async (birthdayFormId = "", groupFormId = "") => {
+export const testDryRun = webMethod(Permissions.Admin, async () => {
     console.log("Starting Migration Dry Run...");
+    const birthdayFormId = "00000000-0000-0000-0000-000000000000";
+    const groupFormId = "ab96cd4c-735d-4876-8f4c-ac590745c96f";
     const result = await runV2Migration(birthdayFormId, groupFormId);
     return {
         message: "Dry Run completed. Please check 'MigrationTestResults' CMS collection.",
@@ -20,7 +22,7 @@ export const testDryRun = webMethod(Permissions.Admin, async (birthdayFormId = "
  * WARNING: This will create actual V2 bookings and CANCEL the original V1 bookings.
  * Only run this after verifying the Dry Run results and disabling Wix Automations.
  */
-export const testLiveRun = webMethod(Permissions.Admin, async (confirm, birthdayFormId = "", groupFormId = "") => {
+export const testLiveRun = webMethod(Permissions.Admin, async (confirm) => {
     if (confirm !== "I_AM_SURE") {
         return {
             error: "You must pass 'I_AM_SURE' to trigger the live migration."
@@ -28,6 +30,8 @@ export const testLiveRun = webMethod(Permissions.Admin, async (confirm, birthday
     }
 
     console.log("Starting LIVE Migration...");
+    const birthdayFormId = "00000000-0000-0000-0000-000000000000";
+    const groupFormId = "ab96cd4c-735d-4876-8f4c-ac590745c96f";
     const result = await runV2Migration(birthdayFormId, groupFormId);
     return {
         message: "Live Migration completed.",

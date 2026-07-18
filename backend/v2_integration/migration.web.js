@@ -5,7 +5,7 @@ import wixData from 'wix-data';
 const wixBookingsV1 = require('wix-bookings-backend');
 
 // SET TO FALSE TO RUN FOR REAL
-const DRY_RUN = false; 
+const DRY_RUN = true; 
 const START_DATE = new Date("2026-04-23T00:00:00Z");
 
 /**
@@ -35,12 +35,11 @@ export const runV2Migration = webMethod(Permissions.Admin, async (birthdayFormId
         const v1Query = await wixBookingsV1.bookings.queryBookings()
             .gt("startTime", new Date().toISOString()) 
             .ge("_createdDate", START_DATE)
-            .hasSome("status", ["CONFIRMED", "PENDING"])
-            .limit(100)
+            .limit(1000)
             .find();
 
-        const allFuture = v1Query.items;
-        console.log(`Found ${allFuture.length} future V1 bookings for migration.`);
+        const allFuture = (v1Query.items || []).filter(b => b.status === "CONFIRMED" || b.status === "PENDING");
+        console.log(`Found ${allFuture.length} future V1 bookings for migration (CONFIRMED/PENDING).`);
 
         let totalCount = 0;
         let results = [];
@@ -96,8 +95,9 @@ export const confirmAllCreatedBookings = webMethod(Permissions.Admin, async () =
         const name = `${b.contactDetails?.firstName || ''} ${b.contactDetails?.lastName || ''}`.trim();
         try {
             const elevatedConfirm = auth.elevate(bookings.confirmBooking);
-            await elevatedConfirm(b._id, {
-                participantNotification: { notifyParticipants: false }
+            await elevatedConfirm(b._id, { 
+                participantNotification: { notifyParticipants: false },
+                flowControlSettings: { ignoreCapacity: true }
             });
             confirmed++;
             console.log(`CONFIRMED: ${name} (${b._id}) - ${b.startDate}`);
@@ -156,29 +156,26 @@ async function migrateItems(items, serviceId, type, birthdayFormId, groupFormId)
             try {
                 await logErrorToCMS("Migration Attempt", `Starting migration for ${old._id}`);
 
-                // Try creating V2 first (safest - V1 is NOT cancelled under any circumstances before V2 is confirmed)
+                // 1. Cancel V1 using V1 API to ensure it works, then wait 1 second for capacity to clear
+                try {
+                    await wixBookingsV1.bookings.cancelBooking(old._id);
+                    await new Promise(r => setTimeout(r, 1000));
+                } catch (cancelErr) {
+                    console.warn(`Failed to cancel V1 for ${old._id}: ${cancelErr.message}`);
+                }
+
+                // 2. Create V2
                 const elevatedCreate = auth.elevate(bookings.createBooking);
                 const newBooking = await elevatedCreate(bookingInfo, {
                     participantNotification: { notifyParticipants: false }
                 });
 
-                // If V2 was created successfully, confirm it
+                // 3. Confirm V2
                 if (newBooking && newBooking._id) {
                     const elevatedConfirm = auth.elevate(bookings.confirmBooking);
                     await elevatedConfirm(newBooking._id, {
                         participantNotification: { notifyParticipants: false }
                     });
-
-                    // Cancel V1 only now that V2 is safely created & confirmed
-                    try {
-                        const elevatedCancel = auth.elevate(bookings.cancelBooking);
-                        await elevatedCancel(old._id, {
-                            participantNotification: { notifyParticipants: false },
-                            flowControlSettings: { ignoreCancellationPolicy: true }
-                        });
-                    } catch (cancelErr) {
-                        console.warn(`V2 created & confirmed, but V1 cancel failed for ${old._id}: ${cancelErr.message}`);
-                    }
                     count++;
                 }
 
