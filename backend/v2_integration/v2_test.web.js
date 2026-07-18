@@ -3,39 +3,6 @@ import { extendedBookings } from '@wix/bookings';
 import { auth } from '@wix/essentials';
 import { submissions } from 'wix-forms.v2';
 import { mapBookingToRow } from './mapping';
-import { forms } from 'wix-forms.v2';
-
-/**
- * Diagnostic tool to list all V2 forms in the booking namespace.
- * Useful to find the formId and field keys.
- */
-export const getFormDefinitions = webMethod(Permissions.Admin, async () => {
-    try {
-        const BOOKING_FORMS_NAMESPACE = "wix.bookings.v2.bookings";
-        const elevatedListForms = auth.elevate(forms.listForms);
-        const { forms: bookingForms } = await elevatedListForms(BOOKING_FORMS_NAMESPACE, { enabled: true });
-        
-        return {
-            status: "Success",
-            forms: bookingForms.map(f => ({
-                id: f._id,
-                displayName: f.displayName,
-                fields: (f.fields || []).map(field => ({
-                    id: field._id,
-                    target: field.target,
-                    label: field.view?.label,
-                    type: field.view?.type
-                }))
-            }))
-        };
-    } catch (err) {
-        console.error("Failed to list forms:", err.message);
-        return {
-            status: "Failed",
-            error: err.message
-        };
-    }
-});
 
 /**
  * Test function to verify that V2 bookings are being correctly mapped.

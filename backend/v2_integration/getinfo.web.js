@@ -1,7 +1,7 @@
 import { Permissions, webMethod } from "wix-web-module";
 import { bookings, extendedBookings } from '@wix/bookings';
 import { auth } from '@wix/essentials';
-import { forms, submissions } from 'wix-forms.v2';
+import { submissions } from 'wix-forms.v2';
 const wixBookingsV1 = require('wix-bookings-backend');
 
 const START_DATE = new Date("2026-04-23T00:00:00Z");

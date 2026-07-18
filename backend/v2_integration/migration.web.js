@@ -2,7 +2,6 @@ import { Permissions, webMethod } from "wix-web-module";
 import { bookings } from '@wix/bookings';
 import { auth } from '@wix/essentials';
 import wixData from 'wix-data';
-import { forms } from 'wix-forms.v2';
 const wixBookingsV1 = require('wix-bookings-backend');
 
 // SET TO FALSE TO RUN FOR REAL
@@ -13,7 +12,7 @@ const START_DATE = new Date("2026-04-23T00:00:00Z");
  * Run the V1-to-V2 bookings migration.
  * Safe flow: Creates V2 booking, confirms V2 booking, cancels V1 booking.
  */
-export const runV2Migration = webMethod(Permissions.Admin, async () => {
+export const runV2Migration = webMethod(Permissions.Admin, async (birthdayFormId = "", groupFormId = "") => {
     const birthdayServices = [
         "d0c2496b-536b-434e-92cf-f637cc69d610", 
         "bf6e95c2-275e-4c24-8926-886a10cfb5f2", 
@@ -23,19 +22,14 @@ export const runV2Migration = webMethod(Permissions.Admin, async () => {
     const groupService = "5eb1b06e-2dbd-438c-b83a-977fe736db6e";
 
     try {
-        console.log("Fetching booking forms in V2 namespace...");
-        const BOOKING_FORMS_NAMESPACE = "wix.bookings.v2.bookings";
-        const elevatedListForms = auth.elevate(forms.listForms);
-        const { forms: bookingForms } = await elevatedListForms(BOOKING_FORMS_NAMESPACE, { enabled: true });
+        let bFormId = birthdayFormId;
+        let gFormId = groupFormId;
 
-        const birthdayForm = bookingForms.find(f => (f.fields || []).some(field => field.target === "bp_birthday_child"));
-        const groupForm = bookingForms.find(f => (f.fields || []).some(field => field.target === "ga_org"));
-
-        if (!birthdayForm || !groupForm) {
-            throw new Error(`Could not find active forms. Birthday Form found: ${!!birthdayForm}, Group Form found: ${!!groupForm}`);
+        if (!bFormId || !gFormId) {
+            throw new Error("Form IDs were not provided. Please run the script by passing your V2 Birthday and Group Form IDs (e.g. testDryRun('birthday-id', 'group-id')).");
         }
 
-        console.log(`Forms detected. Birthday Form ID: ${birthdayForm._id}, Group Form ID: ${groupForm._id}`);
+        console.log(`Forms detected/configured. Birthday Form ID: ${bFormId}, Group Form ID: ${gFormId}`);
 
         // 1. Get all future bookings from V1 created after START_DATE with active status
         const v1Query = await wixBookingsV1.bookings.queryBookings()
@@ -54,14 +48,14 @@ export const runV2Migration = webMethod(Permissions.Admin, async () => {
         // 2. Migrate Birthday Parties
         for (const sId of birthdayServices) {
             const matches = allFuture.filter(b => b.bookedEntity?.serviceId === sId);
-            const count = await migrateItems(matches, sId, "BIRTHDAY", birthdayForm._id, groupForm._id);
+            const count = await migrateItems(matches, sId, "BIRTHDAY", bFormId, gFormId);
             results.push(`Service ${sId} (Birthday): ${count} bookings processed.`);
             totalCount += count;
         }
 
         // 3. Migrate Group Activities
         const groupMatches = allFuture.filter(b => b.bookedEntity?.serviceId === groupService);
-        const gCount = await migrateItems(groupMatches, groupService, "GROUP", birthdayForm._id, groupForm._id);
+        const gCount = await migrateItems(groupMatches, groupService, "GROUP", bFormId, gFormId);
         results.push(`Service ${groupService} (Group): ${gCount} bookings processed.`);
         totalCount += gCount;
 
