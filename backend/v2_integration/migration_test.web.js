@@ -19,8 +19,8 @@ export const testDryRun = webMethod(Permissions.Admin, async () => {
 
 /**
  * Trigger the LIVE migration.
- * WARNING: This will create actual V2 bookings and CANCEL the original V1 bookings.
- * Only run this after verifying the Dry Run results and disabling Wix Automations.
+ * WARNING: This will update actual V2 bookings with form submission data.
+ * Only run this after verifying the Dry Run results.
  */
 export const testLiveRun = webMethod(Permissions.Admin, async (confirm) => {
     if (confirm !== "I_AM_SURE") {

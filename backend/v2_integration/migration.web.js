@@ -9,8 +9,8 @@ const DRY_RUN = true;
 const START_DATE = new Date("2026-04-23T00:00:00Z");
 
 /**
- * Run the V1-to-V2 bookings migration.
- * Safe flow: Creates V2 booking, confirms V2 booking, cancels V1 booking.
+ * Run the bookings form data update.
+ * Safe flow: Gets existing V2 booking, updates its formSubmission with parsed V1/legacy form data.
  */
 export const runV2Migration = webMethod(Permissions.Admin, async (birthdayFormId = "", groupFormId = "") => {
     const birthdayServices = [
@@ -147,41 +147,36 @@ async function migrateItems(items, serviceId, type, birthdayFormId, groupFormId)
         };
 
         if (DRY_RUN) {
-            console.log(`[DRY RUN] Would migrate: ${old.formInfo.contactDetails.firstName} for service ${serviceId}`);
+            console.log(`[DRY RUN] Would update: ${old.formInfo?.contactDetails?.firstName} for service ${serviceId}`);
             // Log to CMS for visual verification
             await logDryRunToCMS(old, bookingInfo, type);
             count++;
         } else {
             // LIVE RUN
             try {
-                await logErrorToCMS("Migration Attempt", `Starting migration for ${old._id}`);
+                await logErrorToCMS("Migration Attempt", `Starting update for ${old._id}`);
 
-                // 1. Cancel V1 using V1 API to ensure it works, then wait 1 second for capacity to clear
-                try {
-                    await wixBookingsV1.bookings.cancelBooking(old._id);
-                    await new Promise(r => setTimeout(r, 1000));
-                } catch (cancelErr) {
-                    console.warn(`Failed to cancel V1 for ${old._id}: ${cancelErr.message}`);
+                const elevatedGet = auth.elevate(bookings.getBooking);
+                const currentBooking = await elevatedGet(old._id);
+
+                if (!currentBooking) {
+                    throw new Error(`Booking ${old._id} not found in V2 API.`);
                 }
 
-                // 2. Create V2
-                const elevatedCreate = auth.elevate(bookings.createBooking);
-                const newBooking = await elevatedCreate(bookingInfo, {
-                    participantNotification: { notifyParticipants: false }
-                });
+                // Update formSubmission
+                currentBooking.formSubmission = {
+                    formId: type === "BIRTHDAY" ? birthdayFormId : groupFormId,
+                    fields: formFields
+                };
 
-                // 3. Confirm V2
-                if (newBooking && newBooking._id) {
-                    const elevatedConfirm = auth.elevate(bookings.confirmBooking);
-                    await elevatedConfirm(newBooking._id, {
-                        participantNotification: { notifyParticipants: false }
-                    });
-                    count++;
-                }
+                const elevatedUpdate = auth.elevate(bookings.updateBooking);
+                await elevatedUpdate(old._id, currentBooking);
+                
+                count++;
 
             } catch (err) {
-                console.error(`Migration Failed for ${old._id}:`, err.message);
-                await logErrorToCMS("Migration Failed", `Booking ${old._id} could not be migrated: ${err.message}`);
+                console.error(`Update Failed for ${old._id}:`, err.message);
+                await logErrorToCMS("Migration Failed", `Booking ${old._id} could not be updated: ${err.message}`);
             }
         }
     }
