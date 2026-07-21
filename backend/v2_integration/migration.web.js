@@ -3,6 +3,7 @@ import { bookings } from '@wix/bookings';
 import { auth } from '@wix/essentials';
 import wixData from 'wix-data';
 const wixBookingsV1 = require('wix-bookings-backend');
+import { submissions } from 'wix-forms.v2';
 
 // SET TO FALSE TO RUN FOR REAL
 const DRY_RUN = true; 
@@ -126,7 +127,7 @@ async function migrateItems(items, serviceId, type, birthdayFormId, groupFormId)
         // Construct formFields in V2 format: array of { fieldId, value }
         const formFields = Object.entries(payload).map(([key, val]) => ({
             fieldId: key,
-            value: val
+            value: String(val || "")
         }));
 
         const bookingInfo = {
@@ -152,30 +153,56 @@ async function migrateItems(items, serviceId, type, birthdayFormId, groupFormId)
             await logDryRunToCMS(old, bookingInfo, type);
             count++;
         } else {
-            // LIVE RUN
+            // LIVE RUN - Extracting Form Submission and updating it per the client's suggestion
             try {
-                await logErrorToCMS("Migration Attempt", `Starting update for ${old._id}`);
-
-                const elevatedGet = auth.elevate(bookings.getBooking);
-                const currentBooking = await elevatedGet(old._id);
+                console.log(`[DEBUG] executing getBooking natively for ID: ${old._id}...`);
+                const currentBooking = await bookings.getBooking(old._id);
 
                 if (!currentBooking) {
                     throw new Error(`Booking ${old._id} not found in V2 API.`);
                 }
 
-                // Update formSubmission
-                currentBooking.formSubmission = {
-                    formId: type === "BIRTHDAY" ? birthdayFormId : groupFormId,
-                    fields: formFields
+                // 1. Get the submission ID from the booking
+                const submissionId = currentBooking.formInfo?.submissionId || currentBooking.formInfo?.formSubmissionId || currentBooking.formSubmissionId;
+                
+                if (!submissionId) {
+                    throw new Error(`Booking ${old._id} does not have a linked form submission ID.`);
+                }
+
+                // 2. Retrieve the existing form submission using Wix Forms API query builder natively
+                const subResult = await submissions.querySubmissions().eq('_id', submissionId).find();
+                const existingSubmission = subResult.items ? subResult.items[0] : null;
+                
+                if (!existingSubmission) {
+                    throw new Error(`Submission ${submissionId} not found.`);
+                }
+
+                // Prepare the updated fields as a key-value map, enforcing strict Strings
+                const newFieldsMap = {};
+                for (const [key, val] of Object.entries(payload)) {
+                    newFieldsMap[key] = String(val || "");
+                }
+
+                console.log(`[DEBUG] Constructing submissionUpdate object...`);
+                const submissionUpdate = {
+                    revision: existingSubmission.revision,
+                    content: {
+                        ...(existingSubmission.content || {}),
+                        data: {
+                            ...(existingSubmission.content?.data || {}),
+                            ...newFieldsMap
+                        }
+                    }
                 };
 
-                const elevatedUpdate = auth.elevate(bookings.updateBooking);
-                await elevatedUpdate(old._id, currentBooking);
+                console.log(`[DEBUG] executing updateSubmission natively...`);
+                await submissions.updateSubmission(submissionId, submissionUpdate);
                 
                 count++;
 
             } catch (err) {
                 console.error(`Update Failed for ${old._id}:`, err.message);
+                // Also log to CMS so we can track failures
                 await logErrorToCMS("Migration Failed", `Booking ${old._id} could not be updated: ${err.message}`);
             }
         }
