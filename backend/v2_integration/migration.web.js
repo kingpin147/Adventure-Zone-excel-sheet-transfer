@@ -156,7 +156,10 @@ async function migrateItems(items, serviceId, type, birthdayFormId, groupFormId)
             // LIVE RUN - Extracting Form Submission and updating it per the client's suggestion
             try {
                 console.log(`[DEBUG] executing getBooking natively for ID: ${old._id}...`);
-                const currentBooking = await bookings.getBooking(old._id);
+                // Use extendedBookings to get the V2 booking object natively
+                const { extendedBookings } = require('wix-bookings-backend');
+                const v2Results = await extendedBookings.queryExtendedBookings().eq('_id', old._id).find();
+                const currentBooking = v2Results.items ? v2Results.items[0] : null;
 
                 if (!currentBooking) {
                     throw new Error(`Booking ${old._id} not found in V2 API.`);

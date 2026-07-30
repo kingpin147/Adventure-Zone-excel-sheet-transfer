@@ -1,7 +1,7 @@
 import { extendedBookings } from '@wix/bookings';
 import { auth } from '@wix/essentials';
 import wixData from 'wix-data';
-import { submissions } from 'wix-forms.v2';
+import { submissions, forms } from '@wix/forms';
 import { syncBookingsToSheet } from './syncService';
 
 /**
@@ -44,21 +44,82 @@ export async function export10DaysToGoogleSheets(triggerMetadata) {
         // 3. Sort chronologically by startTime
         allResults.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
         
-        // 4. Fetch up-to-date form submissions via Wix Forms v2
-        const elevatedGetSubmission = auth.elevate(submissions.getSubmission);
+        // 4. Fetch up-to-date form submissions via Wix Forms v2 (Using Wix Support Method)
+        const BOOKING_FORMS_NAMESPACE = "wix.bookings.v2.bookings";
+        
+        function findTextFieldContent(field) {
+            if (typeof field !== 'object' || field === null) return field;
+            const stack = [field];
+            while (stack.length > 0) {
+                const current = stack.pop();
+                if ('text' in current) return current.text;
+                for (const key in current) {
+                    if (Object.prototype.hasOwnProperty.call(current, key)) {
+                        const value = current[key];
+                        if (typeof value === 'object' && value !== null) stack.push(value);
+                    }
+                }
+            }
+            return field;
+        }
+
+        const enrichSubmission = (submission, formFields) => {
+            if (!submission || !formFields) return;
+            const targetLabelMapping = formFields.reduce((acc, field) => (field.target ? {
+                ...acc,
+                [field.target]: findTextFieldContent(field.view.label),
+            } : acc), {});
+
+            return Object.fromEntries(
+                Object.entries(submission).map(([target, value]) => {
+                    const label = targetLabelMapping[target] || target;
+                    return [label, value];
+                })
+            );
+        };
+
+        const findings = allResults.map(rb => {
+            const b = rb.booking || rb;
+            return {
+                bookingId: b._id,
+                submissionId: b.formSubmissionId || (b.formInfo ? b.formInfo.formSubmissionId || b.formInfo.submissionId : null),
+                formId: b.formId || (b.formInfo ? b.formInfo.formId : null)
+            };
+        }).filter(f => f.submissionId);
+
         const submissionsByBookingId = {};
         
-        console.log("Fetching latest form submissions for edited responses...");
-        await Promise.all(allResults.map(async (rb) => {
-            const b = rb.booking || rb;
-            if (!b.formSubmissionId) return;
+        if (findings.length > 0) {
+            console.log("Fetching latest form submissions using Wix Support method...");
             try {
-                const sub = await elevatedGetSubmission(b.formSubmissionId);
-                if (sub) submissionsByBookingId[b._id] = sub;
+                // Rely on top level import of submissions and forms
+                const elevatedQuerySubmissions = auth.elevate(submissions.querySubmissionsByNamespace);
+                const [bookingSubmissions, {forms: bookingForms}] = await Promise.all([
+                    elevatedQuerySubmissions()
+                        .eq("namespace", BOOKING_FORMS_NAMESPACE)
+                        .in("_id", findings.map(f => f.submissionId))
+                        .find(),
+                    forms.listForms(BOOKING_FORMS_NAMESPACE, {enabled: true})
+                ]);
+
+                console.log(`Found ${bookingSubmissions.items.length} submissions from Wix`);
+
+                findings.forEach(finding => {
+                    const relevantSubmission = bookingSubmissions.items.find(s => s._id === finding.submissionId);
+                    const relevantForm = bookingForms.find(f => f._id === finding.formId);
+
+                    if (relevantSubmission && relevantForm) {
+                        const enriched = enrichSubmission(relevantSubmission.submissions, relevantForm.fields);
+                        submissionsByBookingId[finding.bookingId] = enriched;
+                    } else if (relevantSubmission) {
+                        // Fallback if form not found
+                        submissionsByBookingId[finding.bookingId] = relevantSubmission.submissions;
+                    }
+                });
             } catch (err) {
-                console.warn(`Could not fetch submission for booking ${b._id}:`, err.message);
+                console.warn(`Could not fetch submissions using Wix method:`, err.message);
             }
-        }));
+        }
 
         // 5. Send to Google Sheets via syncService
         console.log(`Processing ${allResults.length} bookings for Google Sheets...`);

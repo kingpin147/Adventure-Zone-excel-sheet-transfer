@@ -95,12 +95,14 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
             );
             if (existingIdx >= 0) {
                 fields[existingIdx].value = value;
+                // Update the label just in case the existing one was missing or we now have a better one
+                if (!fields[existingIdx].label) fields[existingIdx].label = key;
             } else {
-                // Add the normalized key
-                fields.push({ _id: normalizedId, value: value, label: '' });
+                // Add the normalized key. We now set the label to 'key' because with the new enrich logic, 'key' is the actual form label.
+                fields.push({ _id: normalizedId, value: value, label: key });
                 // Also add the raw key if it differs, ensuring maximum compatibility
                 if (normalizedId !== key) {
-                    fields.push({ _id: key, value: value, label: '' });
+                    fields.push({ _id: key, value: value, label: key });
                 }
             }
         });
