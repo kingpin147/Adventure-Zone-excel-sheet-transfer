@@ -187,7 +187,16 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
         "n/a", "n/a", bookingId
     ];
 
-    if (extra.length > 0) row.push(...extra);
+    // Column W (index 22): First extra field, if any
+    row[22] = extra.length > 0 ? extra[0] : "";
+    
+    // Column X (index 23): Last Data Updated Time and Date
+    row[23] = formatVancouverDate(new Date().toISOString());
+
+    // Push any remaining extra fields after column X
+    if (extra.length > 1) {
+        row.push(...extra.slice(1));
+    }
     
     return row;
 }
