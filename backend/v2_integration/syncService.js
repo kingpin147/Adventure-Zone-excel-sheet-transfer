@@ -13,18 +13,30 @@ export async function syncBookingsToSheet(bookings, submissionsByBookingId = {})
         const GOOGLE_SCRIPT_URL = await getSecret("GOOGLE_SCRIPT_URL");
         const rows = bookings.map(b => mapBookingToRow(b, submissionsByBookingId));
 
+        const payload = JSON.stringify({ bookings: rows });
+        // Log a preview of the data being sent (limited to 3000 chars to avoid CMS limits)
+        await logToCMS("Sync Payload Preview", `Sending ${rows.length} bookings: ${payload.substring(0, 3000)}`);
+
         const response = await fetch(GOOGLE_SCRIPT_URL, {
             method: 'POST',
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ bookings: rows })
+            body: payload
         });
 
         if (response.ok) {
-            const result = await response.json();
-            if (result.status === "error") {
-                await logToCMS("Sync Error (App Script)", result.message);
-            } else {
-                await logToCMS("Sync Success", `Synced ${rows.length} bookings.`);
+            const resultText = await response.text();
+            // Log the raw response from Google Sheets to confirm what was received
+            await logToCMS("Sync Response Success", `Google Sheets Response: ${resultText}`);
+            
+            try {
+                const result = JSON.parse(resultText);
+                if (result.status === "error") {
+                    await logToCMS("Sync Error (App Script)", result.message);
+                } else {
+                    await logToCMS("Sync Success", `Synced ${rows.length} bookings.`);
+                }
+            } catch (e) {
+                await logToCMS("Sync Warning", `Response was successful but not JSON: ${resultText.substring(0, 500)}`);
             }
         } else {
             const errText = await response.text();
