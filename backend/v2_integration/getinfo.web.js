@@ -183,15 +183,83 @@ export const getDuplicateV1Bookings = webMethod(Permissions.Admin, async () => {
 });
 
 /**
- * Diagnostic tool to fetch specific form submission fields for a given submission ID.
+ * Diagnostic tool to fetch specific form submission fields for a given submission ID or Booking ID.
  */
-export const getFormSubmissionDetails = webMethod(Permissions.Admin, async (submissionId) => {
+export const getFormSubmissionDetails = webMethod(Permissions.Admin, async (idOrBookingId) => {
     try {
-        const elevatedGetSubmission = auth.elevate(submissions.getSubmission);
-        const sub = await elevatedGetSubmission(submissionId);
-        
+        let submissionId = idOrBookingId;
+        let bookingDetails = null;
+
+        // 1. Try resolving booking ID to submission ID using extendedBookings.getExtendedBooking
+        try {
+            const elevatedGet = auth.elevate(extendedBookings.getExtendedBooking);
+            const res = await elevatedGet(idOrBookingId);
+            const b = res?.booking || res;
+            if (b && (b._id || b.id)) {
+                bookingDetails = b;
+                submissionId = b.formSubmissionId || (b.formInfo ? b.formInfo.formSubmissionId || b.formInfo.submissionId : null) || submissionId;
+            }
+        } catch (e1) {
+            // 2. Try V1 getBooking as fallback
+            try {
+                const v1Booking = await wixBookingsV1.bookings.getBooking(idOrBookingId);
+                if (v1Booking) {
+                    bookingDetails = v1Booking;
+                    submissionId = v1Booking.formSubmissionId || v1Booking.formInfo?.formSubmissionId || v1Booking.formInfo?.submissionId || submissionId;
+                }
+            } catch (e2) {
+                // 3. Try queryExtendedBookings
+                try {
+                    const elevatedQueryV2 = auth.elevate(extendedBookings.queryExtendedBookings);
+                    const result = await elevatedQueryV2({
+                        filter: { "_id": idOrBookingId }
+                    });
+                    const items = result.extendedBookings || [];
+                    if (items.length > 0) {
+                        const b = items[0].booking || items[0];
+                        bookingDetails = b;
+                        submissionId = b.formSubmissionId || (b.formInfo ? b.formInfo.formSubmissionId || b.formInfo.submissionId : null) || submissionId;
+                    }
+                } catch (e3) {}
+            }
+        }
+
+        // Fetch submission by submissionId using wix-forms v2 methods without auth.elevate wrapper
+        let sub = null;
+        let fetchError = null;
+
+        // Attempt 1: Direct getSubmission
+        try {
+            sub = await submissions.getSubmission(submissionId);
+        } catch (err1) {
+            fetchError = err1.message;
+            // Attempt 2: querySubmissions
+            try {
+                const queryRes = await submissions.querySubmissions().eq("_id", submissionId).find();
+                if (queryRes && queryRes.items && queryRes.items.length > 0) {
+                    sub = queryRes.items[0];
+                }
+            } catch (err2) {
+                fetchError += ` | querySubmissions error: ${err2.message}`;
+                // Attempt 3: querySubmissionsByNamespace
+                try {
+                    const wixFormsSdk = require('@wix/forms');
+                    if (wixFormsSdk && wixFormsSdk.submissions && wixFormsSdk.submissions.getSubmission) {
+                        sub = await wixFormsSdk.submissions.getSubmission(submissionId);
+                    }
+                } catch (err3) {
+                    fetchError += ` | @wix/forms error: ${err3.message}`;
+                }
+            }
+        }
+
+        if (!sub) {
+            throw new Error(`Could not fetch submission ID ${submissionId}. Errors: ${fetchError}`);
+        }
+
         return {
             status: "Success",
+            bookingId: bookingDetails ? (bookingDetails._id || bookingDetails.id) : null,
             submissionId,
             submissionRaw: sub
         };
@@ -231,12 +299,19 @@ function findProperty(obj, propertyName, path = '') {
 }
 
 /**
- * Diagnostic tool to find the exact JSON path of formSubmissionId in V2 bookings.
+ * Diagnostic tool to find the exact JSON path of formSubmissionId in V2 bookings,
+ * and automatically include John Danielson's submission details.
  */
 export const findFormSubmissionIdPaths = webMethod(Permissions.Admin, async () => {
     try {
+        // Query V2 bookings starting from 2026-01-01
         const elevatedQuery = auth.elevate(extendedBookings.queryExtendedBookings);
-        const bookingResults = await elevatedQuery({ pagingMetadata: { limit: 10 } });
+        const bookingResults = await elevatedQuery({
+            filter: {
+                "startDate": { "$gte": "2026-01-01T00:00:00Z" }
+            },
+            pagingMetadata: { limit: 10 }
+        });
         const items = bookingResults.extendedBookings || [];
 
         const findings = [];
@@ -248,10 +323,19 @@ export const findFormSubmissionIdPaths = webMethod(Permissions.Admin, async () =
             });
         }
 
+        // Also fetch John Danielson submission details directly for Wix Support
+        let johnDanielsonSubmission = null;
+        try {
+            johnDanielsonSubmission = await getFormSubmissionDetails("3240fe99-a524-456e-bf16-5fac2ce11301");
+        } catch (e) {
+            johnDanielsonSubmission = { error: e.message };
+        }
+
         return {
             status: "Success",
             count: items.length,
-            findings
+            findings,
+            johnDanielsonSubmissionResult: johnDanielsonSubmission
         };
     } catch (err) {
         return {
