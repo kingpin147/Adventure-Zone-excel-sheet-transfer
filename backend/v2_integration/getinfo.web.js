@@ -1,7 +1,7 @@
 import { Permissions, webMethod } from "wix-web-module";
 import { bookings, extendedBookings } from '@wix/bookings';
 import { auth } from '@wix/essentials';
-import { submissions } from 'wix-forms.v2';
+import { submissions } from '@wix/forms';
 const wixBookingsV1 = require('wix-bookings-backend');
 
 const START_DATE = new Date("2026-04-23T00:00:00Z");
@@ -13,9 +13,9 @@ export const getBookingsSummary = webMethod(Permissions.Admin, async () => {
     try {
         console.log("Analyzing V1 and V2 bookings...");
         
-        // 1. Query V1 Future bookings
-        const v1Query = await wixBookingsV1.bookings.queryBookings()
-            .gt("startTime", new Date().toISOString())
+        // 1. Query Future bookings
+        const v1Query = await bookings.queryBookings()
+            .gt("startDate", new Date().toISOString())
             .ge("_createdDate", START_DATE)
             .limit(1000)
             .find();
@@ -71,8 +71,8 @@ export const getBookingsSummary = webMethod(Permissions.Admin, async () => {
  */
 export const getV1BookingsForMigration = webMethod(Permissions.Admin, async () => {
     try {
-        const v1Query = await wixBookingsV1.bookings.queryBookings()
-            .gt("startTime", new Date().toISOString())
+        const v1Query = await bookings.queryBookings()
+            .gt("startDate", new Date().toISOString())
             .ge("_createdDate", START_DATE)
             .limit(100)
             .find();
@@ -142,8 +142,8 @@ export const getV2BookingsStatus = webMethod(Permissions.Admin, async () => {
  */
 export const getDuplicateV1Bookings = webMethod(Permissions.Admin, async () => {
     try {
-        const v1Query = await wixBookingsV1.bookings.queryBookings()
-            .gt("startTime", new Date().toISOString())
+        const v1Query = await bookings.queryBookings()
+            .gt("startDate", new Date().toISOString())
             .ge("_createdDate", START_DATE)
             .limit(1000)
             .find();
@@ -202,7 +202,8 @@ export const getFormSubmissionDetails = webMethod(Permissions.Admin, async (idOr
         } catch (e1) {
             // 2. Try V1 getBooking as fallback
             try {
-                const v1Booking = await wixBookingsV1.bookings.getBooking(idOrBookingId);
+                const elevatedGetBooking = auth.elevate(bookings.getBooking);
+                const v1Booking = await elevatedGetBooking(idOrBookingId);
                 if (v1Booking) {
                     bookingDetails = v1Booking;
                     submissionId = v1Booking.formSubmissionId || v1Booking.formInfo?.formSubmissionId || v1Booking.formInfo?.submissionId || submissionId;
@@ -224,32 +225,19 @@ export const getFormSubmissionDetails = webMethod(Permissions.Admin, async (idOr
             }
         }
 
-        // Fetch submission by submissionId using wix-forms v2 methods without auth.elevate wrapper
+        // Fetch submission by submissionId
         let sub = null;
         let fetchError = null;
 
-        // Attempt 1: Direct getSubmission
         try {
-            sub = await submissions.getSubmission(submissionId);
+            const elevatedGetSub = auth.elevate(submissions.getSubmission);
+            sub = await elevatedGetSub(submissionId);
         } catch (err1) {
             fetchError = err1.message;
-            // Attempt 2: querySubmissions
             try {
-                const queryRes = await submissions.querySubmissions().eq("_id", submissionId).find();
-                if (queryRes && queryRes.items && queryRes.items.length > 0) {
-                    sub = queryRes.items[0];
-                }
+                sub = await submissions.getSubmission(submissionId);
             } catch (err2) {
-                fetchError += ` | querySubmissions error: ${err2.message}`;
-                // Attempt 3: querySubmissionsByNamespace
-                try {
-                    const wixFormsSdk = require('@wix/forms');
-                    if (wixFormsSdk && wixFormsSdk.submissions && wixFormsSdk.submissions.getSubmission) {
-                        sub = await wixFormsSdk.submissions.getSubmission(submissionId);
-                    }
-                } catch (err3) {
-                    fetchError += ` | @wix/forms error: ${err3.message}`;
-                }
+                fetchError += ` | direct error: ${err2.message}`;
             }
         }
 

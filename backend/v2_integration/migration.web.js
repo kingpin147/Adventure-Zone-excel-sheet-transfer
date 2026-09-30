@@ -1,9 +1,9 @@
 import { Permissions, webMethod } from "wix-web-module";
-import { bookings } from '@wix/bookings';
+import { bookings, extendedBookings } from '@wix/bookings';
 import { auth } from '@wix/essentials';
 import wixData from 'wix-data';
 const wixBookingsV1 = require('wix-bookings-backend');
-import { submissions } from 'wix-forms.v2';
+import { submissions } from '@wix/forms';
 
 // SET TO FALSE TO RUN FOR REAL
 const DRY_RUN = true; 
@@ -32,9 +32,9 @@ export const runV2Migration = webMethod(Permissions.Admin, async (birthdayFormId
 
         console.log(`Forms detected/configured. Birthday Form ID: ${bFormId}, Group Form ID: ${gFormId}`);
 
-        // 1. Get all future bookings from V1 created after START_DATE with active status
-        const v1Query = await wixBookingsV1.bookings.queryBookings()
-            .gt("startTime", new Date().toISOString()) 
+        // 1. Get all future bookings created after START_DATE with active status
+        const v1Query = await bookings.queryBookings()
+            .gt("startDate", new Date().toISOString()) 
             .ge("_createdDate", START_DATE)
             .limit(1000)
             .find();
@@ -156,10 +156,12 @@ async function migrateItems(items, serviceId, type, birthdayFormId, groupFormId)
             // LIVE RUN - Extracting Form Submission and updating it per the client's suggestion
             try {
                 console.log(`[DEBUG] executing getBooking natively for ID: ${old._id}...`);
-                // Use extendedBookings to get the V2 booking object natively
-                const { extendedBookings } = require('wix-bookings-backend');
-                const v2Results = await extendedBookings.queryExtendedBookings().eq('_id', old._id).find();
-                const currentBooking = v2Results.items ? v2Results.items[0] : null;
+                // Use elevated extendedBookings from @wix/bookings
+                const elevatedQueryV2 = auth.elevate(extendedBookings.queryExtendedBookings);
+                const v2Results = await elevatedQueryV2({
+                    filter: { "_id": old._id }
+                });
+                const currentBooking = v2Results.extendedBookings?.[0]?.booking || v2Results.extendedBookings?.[0] || null;
 
                 if (!currentBooking) {
                     throw new Error(`Booking ${old._id} not found in V2 API.`);
@@ -172,9 +174,9 @@ async function migrateItems(items, serviceId, type, birthdayFormId, groupFormId)
                     throw new Error(`Booking ${old._id} does not have a linked form submission ID.`);
                 }
 
-                // 2. Retrieve the existing form submission using Wix Forms API query builder natively
-                const subResult = await submissions.querySubmissions().eq('_id', submissionId).find();
-                const existingSubmission = subResult.items ? subResult.items[0] : null;
+                // 2. Retrieve the existing form submission
+                const elevatedGetSub = auth.elevate(submissions.getSubmission);
+                const existingSubmission = await elevatedGetSub(submissionId);
                 
                 if (!existingSubmission) {
                     throw new Error(`Submission ${submissionId} not found.`);
@@ -189,17 +191,15 @@ async function migrateItems(items, serviceId, type, birthdayFormId, groupFormId)
                 console.log(`[DEBUG] Constructing submissionUpdate object...`);
                 const submissionUpdate = {
                     revision: existingSubmission.revision,
-                    content: {
-                        ...(existingSubmission.content || {}),
-                        data: {
-                            ...(existingSubmission.content?.data || {}),
-                            ...newFieldsMap
-                        }
+                    submissions: {
+                        ...(existingSubmission.submissions || {}),
+                        ...newFieldsMap
                     }
                 };
 
                 console.log(`[DEBUG] executing updateSubmission natively...`);
-                await submissions.updateSubmission(submissionId, submissionUpdate);
+                const elevatedUpdateSub = auth.elevate(submissions.updateSubmission);
+                await elevatedUpdateSub(submissionId, submissionUpdate);
                 
                 count++;
 
@@ -258,6 +258,7 @@ function mapBirthdayToV2(old) {
         "bp_num_adults": getVal("Number of Adults"),
         "bp_letter_colour": getVal("Colour of Lettering on Banner\n(blue, red, green, yellow, gold, pink, purple, doesn't matter)"),
         "bp_pinata": isChecked("Add Pinata? $40"),
+        "add_goody_bag": getVal("Goody bag options") || (isChecked("Add Goody Bags? $6 per child") ? "Standard - $5" : ""),
         "bp_goody_bags": isChecked("Add Goody Bags? $6 per child"),
         "bp_sand_art": isChecked("Add Sand Art? $8 per child"),
         "bp_extra_info": getVal("Anything else you'd like us to know?"),

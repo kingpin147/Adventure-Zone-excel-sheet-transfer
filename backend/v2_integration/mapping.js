@@ -26,9 +26,17 @@ function formatVancouverDate(isoStr) {
         const d = new Date(isoStr);
         if (isNaN(d.getTime())) return isoStr;
         
-        const opts = { timeZone: 'America/Vancouver', hour12: false,
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit' };
+        /** @type {Intl.DateTimeFormatOptions} */
+        const opts = { 
+            timeZone: 'America/Vancouver', 
+            hour12: false,
+            year: 'numeric', 
+            month: '2-digit', 
+            day: '2-digit',
+            hour: '2-digit', 
+            minute: '2-digit', 
+            second: '2-digit' 
+        };
         const f = new Intl.DateTimeFormat('en-US', opts).formatToParts(d);
         const p_opts = {}; f.forEach(pt => p_opts[pt.type] = pt.value);
         
@@ -115,6 +123,8 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
      */
     function getField(v2Key, v1Keywords) {
         let found = null;
+        const keys = Array.isArray(v2Key) ? v2Key : (v2Key ? [v2Key] : []);
+
         for (let i = 0; i < fields.length; i++) {
             if (usedIndices.has(i)) continue;
 
@@ -122,7 +132,7 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
             const fId = (f._id || "").toLowerCase();
             const fLabel = (f.label || "").toLowerCase();
 
-            const isV2Match = v2Key && fId === v2Key.toLowerCase();
+            const isV2Match = keys.some(k => fId === k.toLowerCase());
             const isV1Match = v1Keywords && v1Keywords.some(k => fLabel.includes(k.toLowerCase()));
 
             if (isV2Match || isV1Match) {
@@ -159,7 +169,17 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
         l = getField("bp_letter_colour", ["banner", "lettering"]);
         m = getField("bp_num_kids", ["kids", "approximately"]); 
         n = getField("bp_num_adults", ["adults"]);
-        o = getField("bp_goody_bags", ["goody bags"]);
+        
+        // Priority to selected option (Premium - $8 / Standard - $5) via add_goody_bag or form_field_2b1c
+        let goodyOption = getField(["add_goody_bag", "form_field_2b1c"], ["goody bag options", "goody bag option"]);
+        if (!goodyOption) {
+            goodyOption = getField("bp_goody_bags", ["goody bags"]);
+        } else {
+            // Also consume the checkbox if present so it doesn't pollute extra dynamic columns
+            getField(["bp_goody_bags", "form_field_goody_checkbox"], ["add goody bags?"]);
+        }
+        o = goodyOption;
+
         p = getField("bp_sand_art", ["sand art"]);
         q = getField("bp_pinata", ["pinata"]);
         r = getField("bp_return_cust", ["booked with us", "return"]);
@@ -167,10 +187,14 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
     }
 
     // Collect any leftover data for dynamic columns
+    const standardIgnoredKeys = new Set(["first_name", "last_name", "email", "phone", "address", "form_field_28ae", "submissionid"]);
     const extra = [];
     fields.forEach((f, idx) => {
-        if (!usedIndices.has(idx) && f.label && f.value !== undefined && f.value !== "") {
-            extra.push(`${f.label}: ${f.value}`);
+        if (!usedIndices.has(idx) && f.label && f.value !== undefined && f.value !== null && f.value !== "" && f.value !== false && f.value !== "null") {
+            const keyLower = (f._id || f.label || "").toLowerCase();
+            if (!standardIgnoredKeys.has(keyLower) && !keyLower.startsWith("c_") && !keyLower.startsWith("s_")) {
+                extra.push(`${f.label}: ${f.value}`);
+            }
         }
     });
 
