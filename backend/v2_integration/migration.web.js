@@ -122,7 +122,8 @@ export const confirmAllCreatedBookings = webMethod(Permissions.Admin, async () =
 async function migrateItems(items, serviceId, type, birthdayFormId, groupFormId) {
     let count = 0;
     for (const old of items) {
-        const payload = type === "BIRTHDAY" ? mapBirthdayToV2(old) : mapGroupToV2(old);
+        const serviceName = old.bookedEntity?.title || old.bookedService?.name || "";
+        const payload = type === "BIRTHDAY" ? mapBirthdayToV2(old, serviceName) : mapGroupToV2(old);
         
         // Construct formFields in V2 format: array of { fieldId, value }
         const formFields = Object.entries(payload).map(([key, val]) => ({
@@ -240,18 +241,27 @@ async function logDryRunToCMS(oldBooking, v2Payload, type) {
     }
 }
 
-function mapBirthdayToV2(old) {
+function mapBirthdayToV2(old, serviceName = "") {
     const getVal = (label) => {
         const field = (old.formInfo?.additionalFields || []).find(f => f.label === label);
         return field ? field.value : "";
     };
     const isChecked = (label) => {
         const val = getVal(label);
-        return val !== "" && val !== false && val !== null;
+        if (val === null || val === undefined) return false;
+        if (typeof val === "string") {
+            const v = val.trim().toLowerCase();
+            if (v === "not checked" || v === "unchecked" || v === "no" || v === "false" || v === "") return false;
+            if (v === "checked" || v === "yes" || v === "true") return true;
+        }
+        return val !== false && val !== "";
     };
 
-    return {
-        "form_field_28ae": true, // Default to true for the room selection check
+    const sName = (serviceName || old.bookedEntity?.title || old.bookedService?.name || "").toLowerCase();
+    // 2026 Booking Form connected services: Room rental per hour, Gold Package, Platinum Package, Diamond Package
+    const is2026FormPackage = sName.includes("gold") || sName.includes("platinum") || sName.includes("diamond") || sName.includes("room rental");
+
+    const payload = {
         "bp_birthday_child": getVal("First Name of Birthday Child"),
         "bp_age": getVal("Age of Birthday Child"),
         "bp_num_kids": getVal("Number of Kids (approximately)"),
@@ -264,6 +274,13 @@ function mapBirthdayToV2(old) {
         "bp_extra_info": getVal("Anything else you'd like us to know?"),
         "bp_return_cust": isChecked("Click here if you have booked with us before")
     };
+
+    // Only packages connected to 2026 Booking Form get the hidden value (form_field_28ae)
+    if (is2026FormPackage) {
+        payload["form_field_28ae"] = true; // Default to true for the room selection check on 2026 Booking Form
+    }
+
+    return payload;
 }
 
 function mapGroupToV2(old) {

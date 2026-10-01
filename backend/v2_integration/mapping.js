@@ -78,7 +78,7 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
 
     // 1.1 Overlay latest submission data if available (fixes edited responses)
     const latestSubmission = submissionsByBookingId[b._id];
-    const submissionData = latestSubmission ? (latestSubmission.submissions || (latestSubmission.submission && latestSubmission.submission.submissions)) : null;
+    const submissionData = latestSubmission ? (latestSubmission.submissions || (latestSubmission.submission && latestSubmission.submission.submissions) || latestSubmission) : null;
     if (submissionData) {
         // Logging one sample for verification as requested by Wix
         if (Object.keys(submissionsByBookingId)[0] === b._id) {
@@ -143,9 +143,34 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
         }
         let val = found ? found.value : "";
         if (val === null || val === undefined) return "";
-        // Convert boolean-like values to TRUE/blank for checkboxes
-        if (val === "Checked" || val === true || val === "true") return "TRUE";
-        if (val === false || val === "false") return "";
+        if (typeof val === "string") val = val.trim();
+
+        // Convert negative / unchecked values to empty string (prevents "Not checked" leaking into sheet)
+        if (
+            val === false || 
+            val === "false" || 
+            (typeof val === "string" && (
+                val.toLowerCase() === "not checked" || 
+                val.toLowerCase() === "unchecked" || 
+                val.toLowerCase() === "no"
+            ))
+        ) {
+            return "";
+        }
+
+        // Convert boolean-like / positive values to TRUE for checkboxes
+        if (
+            val === "Checked" || 
+            val === true || 
+            val === "true" || 
+            (typeof val === "string" && (
+                val.toLowerCase() === "checked" || 
+                val.toLowerCase() === "yes"
+            ))
+        ) {
+            return "TRUE";
+        }
+
         return val;
     }
 
@@ -170,15 +195,34 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
         m = getField("bp_num_kids", ["kids", "approximately"]); 
         n = getField("bp_num_adults", ["adults"]);
         
-        // Priority to selected option (Premium - $8 / Standard - $5) via add_goody_bag or form_field_2b1c
-        let goodyOption = getField(["add_goody_bag", "form_field_2b1c"], ["goody bag options", "goody bag option"]);
-        if (!goodyOption) {
-            goodyOption = getField("bp_goody_bags", ["goody bags"]);
+        // Priority 1: Selected option (Premium - $8 / Standard - $5) via add_goody_bag or form_field_2b1c
+        let goodyOption = getField(["add_goody_bag", "form_field_2b1c"], ["goody bag options", "goody bag option", "goody bags option"]);
+        // Priority 2: Checkbox for goody bags
+        let goodyCheckbox = getField(["bp_goody_bags", "form_field_goody_checkbox"], ["add goody bags", "goody bags"]);
+
+        // Normalize goody bag output: "Premium - $8", "Standard - $5", or blank (never "TRUE", "yes", or "Not checked")
+        if (goodyOption && goodyOption !== "" && goodyOption !== "TRUE") {
+            if (goodyOption.toLowerCase().includes("premium")) {
+                o = "Premium - $8";
+            } else if (goodyOption.toLowerCase().includes("standard")) {
+                o = "Standard - $5";
+            } else {
+                o = goodyOption;
+            }
+        } else if (goodyOption === "TRUE" || goodyCheckbox === "TRUE") {
+            // Legacy / Checkbox selection defaults to Standard - $5
+            o = "Standard - $5";
+        } else if (goodyCheckbox && goodyCheckbox !== "" && goodyCheckbox !== "TRUE") {
+            if (goodyCheckbox.toLowerCase().includes("premium")) {
+                o = "Premium - $8";
+            } else if (goodyCheckbox.toLowerCase().includes("standard")) {
+                o = "Standard - $5";
+            } else {
+                o = goodyCheckbox;
+            }
         } else {
-            // Also consume the checkbox if present so it doesn't pollute extra dynamic columns
-            getField(["bp_goody_bags", "form_field_goody_checkbox"], ["add goody bags?"]);
+            o = "";
         }
-        o = goodyOption;
 
         p = getField("bp_sand_art", ["sand art"]);
         q = getField("bp_pinata", ["pinata"]);
