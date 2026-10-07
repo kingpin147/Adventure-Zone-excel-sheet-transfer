@@ -44,17 +44,8 @@ function doPost(e) {
           bRow[2] = existingRow[2];
         }
 
-        // Ensure current row in memory is long enough for any new dynamic columns
-        while (existingRow.length < bRow.length) {
-          existingRow.push("");
-        }
-
-        // Update the row values
-        for (let j = 0; j < bRow.length; j++) {
-          if (bRow[j] !== undefined && bRow[j] !== null) {
-            existingRow[j] = bRow[j];
-          }
-        }
+        // Replace existing row with incoming bRow to remove any old leftover columns
+        fullData[index] = [...bRow];
       } else {
         // ADD NEW ROW
         fullData.push(bRow);
@@ -80,10 +71,11 @@ function doPost(e) {
         return newRow;
       });
 
-      // Clear the old data range and write the new batch
+      // Clear the old data range (including any old extra columns) and write the new batch
       const currentLastRow = sheet.getLastRow();
-      if (currentLastRow > 1) {
-        sheet.getRange(2, 1, currentLastRow - 1, sheet.getLastColumn()).clearContent();
+      const currentLastCol = sheet.getLastColumn();
+      if (currentLastRow > 1 && currentLastCol > 0) {
+        sheet.getRange(2, 1, currentLastRow - 1, currentLastCol).clearContent();
       }
       sheet.getRange(2, 1, paddedData.length, maxCols).setValues(paddedData);
     }

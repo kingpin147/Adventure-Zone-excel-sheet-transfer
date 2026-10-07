@@ -119,30 +119,31 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
     const usedIndices = new Set();
 
     /**
-     * Finds a field by key (V2) or label keywords (V1)
+     * Finds a field by key (V2) or label keywords (V1).
+     * Marks ALL matching entries as used so duplicates are consumed.
      */
     function getField(v2Key, v1Keywords) {
-        let found = null;
+        let foundVal = null;
         const keys = Array.isArray(v2Key) ? v2Key : (v2Key ? [v2Key] : []);
+        const keywords = Array.isArray(v1Keywords) ? v1Keywords : (v1Keywords ? [v1Keywords] : []);
 
         for (let i = 0; i < fields.length; i++) {
-            if (usedIndices.has(i)) continue;
-
             const f = fields[i];
             const fId = (f._id || "").toLowerCase();
             const fLabel = (f.label || "").toLowerCase();
 
-            const isV2Match = keys.some(k => fId === k.toLowerCase());
-            const isV1Match = v1Keywords && v1Keywords.some(k => fLabel.includes(k.toLowerCase()));
+            const isV2Match = keys.some(k => fId === k.toLowerCase() || fLabel === k.toLowerCase());
+            const isV1Match = keywords.some(k => fLabel.includes(k.toLowerCase()) || fId.includes(k.toLowerCase()));
 
             if (isV2Match || isV1Match) {
-                found = f;
                 usedIndices.add(i);
-                break;
+                if (foundVal === null && f.value !== undefined && f.value !== null && f.value !== "") {
+                    foundVal = f.value;
+                }
             }
         }
-        let val = found ? found.value : "";
-        if (val === null || val === undefined) return "";
+        
+        let val = foundVal !== null ? foundVal : "";
         if (typeof val === "string") val = val.trim();
 
         // Convert negative / unchecked values to empty string (prevents "Not checked" leaking into sheet)
@@ -174,6 +175,12 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
         return val;
     }
 
+    // Mark standard contact fields as used so they don't leak into extra columns
+    getField(["first_name", "firstname", "first name"], ["first name"]);
+    getField(["last_name", "lastname", "last name"], ["last name"]);
+    getField(["phone", "phonenumber", "phone number"], ["phone number", "phone"]);
+    getField(["email", "emailaddress", "email address"], ["email"]);
+
     const serviceName = b.bookedService?.name || b.bookedEntity?.title || "";
     const isGroup = serviceName.toLowerCase().includes("group");
 
@@ -189,11 +196,11 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
         o = "n/a"; p = "n/a"; q = "n/a"; r = "n/a";
         s = getField("ga_details", ["details", "anything else", "message", "know"]);
     } else {
-        h = getField("bp_birthday_child", ["birthday child"]); 
-        k = getField("bp_age", ["age"]);
-        l = getField("bp_letter_colour", ["banner", "lettering"]);
-        m = getField("bp_num_kids", ["kids", "approximately"]); 
-        n = getField("bp_num_adults", ["adults"]);
+        h = getField("bp_birthday_child", ["birthday child", "first name of birthday child"]); 
+        k = getField("bp_age", ["age of birthday child", "age"]);
+        l = getField("bp_letter_colour", ["banner", "lettering", "colour of lettering"]);
+        m = getField("bp_num_kids", ["number of kids", "kids", "approximately"]); 
+        n = getField("bp_num_adults", ["number of adults", "adults"]);
         
         // Priority 1: Selected option (Premium - $8 / Standard - $5) via add_goody_bag or form_field_2b1c
         let goodyOption = getField(["add_goody_bag", "form_field_2b1c"], ["goody bag options", "goody bag option", "goody bags option"]);
@@ -224,19 +231,36 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
             o = "";
         }
 
-        p = getField("bp_sand_art", ["sand art"]);
-        q = getField("bp_pinata", ["pinata"]);
+        p = getField("bp_sand_art", ["add sand art", "sand art"]);
+        q = getField("bp_pinata", ["add pinata", "pinata"]);
         r = getField("bp_return_cust", ["booked with us", "return"]);
         s = getField("bp_extra_info", ["anything else", "message", "note", "know"]);
     }
 
-    // Collect any leftover data for dynamic columns
-    const standardIgnoredKeys = new Set(["first_name", "last_name", "email", "phone", "address", "form_field_28ae", "submissionid"]);
+    // Column W: Room selection confirmation
+    const roomCheck = getField(
+        ["form_field_28ae", "bp_room_confirm"], 
+        ["selected the correct room", "correct room", "have you selected"]
+    );
+
+    // Collect any genuinely unmapped extra data for dynamic columns
+    const standardIgnoredPatterns = [
+        "first name", "last name", "email", "phone", "address", 
+        "submissionid", "submission_id", "form_field_28ae", 
+        "birthday child", "age", "banner", "lettering", "kids", "adults",
+        "goody", "sand art", "pinata", "booked with us", "return",
+        "anything else", "message", "note", "know", "details", "organization", "correct room"
+    ];
+
     const extra = [];
     fields.forEach((f, idx) => {
         if (!usedIndices.has(idx) && f.label && f.value !== undefined && f.value !== null && f.value !== "" && f.value !== false && f.value !== "null") {
             const keyLower = (f._id || f.label || "").toLowerCase();
-            if (!standardIgnoredKeys.has(keyLower) && !keyLower.startsWith("c_") && !keyLower.startsWith("s_")) {
+            const labelLower = (f.label || "").toLowerCase();
+            const isIgnored = standardIgnoredPatterns.some(p => keyLower.includes(p) || labelLower.includes(p)) ||
+                              keyLower.startsWith("c_") || 
+                              keyLower.startsWith("s_");
+            if (!isIgnored) {
                 extra.push(`${f.label}: ${f.value}`);
             }
         }
@@ -255,15 +279,17 @@ function mapBookingToRow(booking, submissionsByBookingId = {}) {
         "n/a", "n/a", bookingId
     ];
 
-    // Column W (index 22): First extra field, if any
-    row[22] = extra.length > 0 ? extra[0] : "";
+    // Column W (index 22): Room confirmation or first extra field
+    row[22] = roomCheck || (extra.length > 0 ? extra[0] : "");
     
     // Column X (index 23): Last Data Updated Time and Date
     row[23] = formatVancouverDate(new Date().toISOString());
 
-    // Push any remaining extra fields after column X
-    if (extra.length > 1) {
+    // Push any remaining genuinely unmapped custom fields after column X
+    if (extra.length > 1 && !roomCheck) {
         row.push(...extra.slice(1));
+    } else if (extra.length > 0 && roomCheck) {
+        row.push(...extra);
     }
     
     return row;
